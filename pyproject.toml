@@ -10,7 +10,7 @@ requires-python = ">=3.12,<3.15"
 dependencies = [
   "groq>=0.32,<1", "textual>=6,<8", "rich>=14,<15",
   "sqlglot>=28,<29", "pydantic>=2.12,<3", "python-dotenv>=1.2,<2",
-  "platformdirs>=4.5,<5", "filelock>=3.20,<4",
+  "platformdirs>=4.5,<5", "filelock>=4.2.1,<5",
 ]
 
 [project.scripts]
