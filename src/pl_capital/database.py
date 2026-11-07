@@ -180,7 +180,15 @@ def readonly(path: Path, *, timeout: float = 2.0, max_steps: int = 2_000_000):
     try:
         conn.execute("PRAGMA foreign_keys=ON")
         conn.execute("PRAGMA query_only=ON")
-        conn.enable_load_extension(False)
+        # Some official macOS SQLite builds omit this capability entirely.
+        # Such builds already cannot load extensions; the authorizer/function
+        # allowlist remains enforced in both configurations.
+        disable_extensions = getattr(conn, "enable_load_extension", None)
+        if disable_extensions is not None:
+            try:
+                disable_extensions(False)
+            except sqlite3.NotSupportedError:
+                pass
         conn.setlimit(sqlite3.SQLITE_LIMIT_LENGTH, MAX_RESULT_BYTES)
         conn.setlimit(sqlite3.SQLITE_LIMIT_SQL_LENGTH, 30_000)
         conn.setlimit(sqlite3.SQLITE_LIMIT_COLUMN, 200)
