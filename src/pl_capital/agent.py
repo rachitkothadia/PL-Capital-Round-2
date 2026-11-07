@@ -12,8 +12,9 @@ from pl_capital.exposure import calculate, resolve_portfolio
 from pl_capital.graph import GraphContext
 from pl_capital.groq_client import GroqPlanner
 from pl_capital.models import Answer, TraceEvent
-from pl_capital.sql_safety import validate
+from pl_capital.sql_safety import validate, validate_audit_projection
 from pl_capital.sql_tool import execute
+from pl_capital.verification import verify_market_values
 
 INJECTION = re.compile(
     r"ignore\s+(?:all\s+)?(?:previous|prior|system)|GROQ_API_KEY|gsk_[A-Za-z0-9]+|"
@@ -178,12 +179,24 @@ class PortfolioAgent:
                             {"sql": plan.sql, "parameters": params},
                         )
                         sql, tables = validate(plan.sql, params, context["schema"])
+                        validate_audit_projection(sql, question=question)
                         event(
                             "validation",
                             "Single SELECT, schema, functions and bindings validated.",
                             {"source_tables": tables},
                         )
                         result = execute(self.settings.db_path, sql, params)
+                        checked = verify_market_values(
+                            self.settings.db_path,
+                            question,
+                            context["sector_names"],
+                            result.model_dump(mode="json"),
+                        )
+                        if checked:
+                            event(
+                                "metric_verification",
+                                "Sector market values, all-holding denominator, percentage units and portfolio membership independently checked.",
+                            )
                         answer.result = result.model_dump(mode="json")
                         event(
                             "execution",
@@ -208,7 +221,7 @@ class PortfolioAgent:
                     except QueryError as exc:
                         event(
                             "validation_error",
-                            "Rejected query; unsafe SQL was not executed.",
+                            "Query failed validation or execution limits; no result accepted.",
                             {"error": str(exc), "attempt": attempt + 1},
                         )
                         if attempt:

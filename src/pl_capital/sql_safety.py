@@ -12,6 +12,65 @@ from pl_capital.database import SAFE_FUNCTIONS
 from pl_capital.errors import QueryError
 
 
+def validate_audit_projection(sql: str, *, question: str = "") -> None:
+    """General ratio display policy, separate from the SQL security boundary.
+
+    The agent must ask Groq to repair a deficient plan; this never rewrites SQL
+    or supplies known assessment answers. Ratios expose their denominators.
+    Percentage tables use the documented default rounding and ranking.
+    """
+    tree = sqlglot.parse_one(sql, read="sqlite")
+    if not isinstance(tree, exp.Select):
+        return
+    projected = [p.this if isinstance(p, exp.Alias) else p for p in tree.expressions]
+    columns = {p.sql(dialect="sqlite").lower() for p in projected if isinstance(p, exp.Column)}
+    for projection in tree.expressions:
+        divisions = list(projection.find_all(exp.Div))
+        for division in divisions:
+            denominator = division.expression
+            if (
+                isinstance(denominator, exp.Column)
+                and denominator.sql(dialect="sqlite").lower() not in columns
+            ):
+                raise QueryError(
+                    "Auditable ratios must include the denominator as a separate output column."
+                )
+        percentage = (
+            len(tree.expressions) > 1
+            and bool(divisions)
+            and any(
+                isinstance(node, exp.Literal)
+                and not node.is_string
+                and node.this in {"100", "100.0"}
+                for node in projection.walk()
+            )
+        )
+        if not percentage:
+            continue
+        rounding = projection.find(exp.Round)
+        if rounding is None or str(rounding.args.get("decimals")) != "2":
+            raise QueryError(
+                "Percentage outputs must use ROUND(expression, 2) for the documented display precision."
+            )
+        if re.search(
+            r"\b(?:sort|sorted|order|ordered|rank)\b.{0,40}\b(?:by|ascend|descend|alphabet)",
+            question,
+            re.I,
+        ):
+            continue
+        order = tree.args.get("order")
+        alias = projection.alias_or_name.lower()
+        if (
+            not order
+            or not order.expressions
+            or not order.expressions[0].args.get("desc")
+            or order.expressions[0].this.name.lower() != alias
+        ):
+            raise QueryError(
+                "Percentage breakdowns must use the documented default descending percentage ordering."
+            )
+
+
 def validate(sql: str, parameters: dict, schema: dict) -> tuple[str, list[str]]:
     if not isinstance(sql, str) or not sql.strip() or len(sql) > 30_000:
         raise QueryError("SQL must contain one bounded SELECT statement.")

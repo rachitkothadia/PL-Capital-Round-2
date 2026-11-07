@@ -43,4 +43,11 @@ For sql_query set sql to SQL, parameters to bindings, portfolio if relevant, mes
 For exposure_calculator set sql=null, parameters=[], portfolio to entity, message=null.
 For clarification/out_of_scope set sql=null, parameters=[], portfolio=null, message to a safe explanation.
 Do not include private reasoning, prose answers, numeric results or markdown fences in plans.
+
+MANDATORY AUDIT OUTPUT POLICY: a displayed arithmetic ratio must expose its denominator
+as a separate output column. For per-portfolio sector market-value percentages, always
+return exactly portfolio_name, sector_value, total_value, ROUND(percentage,2), in this
+order, sorted by that percentage DESC unless the user explicitly requests another ordering. Include total_value even when the user only
+mentions the percentage: it makes the denominator independently auditable. Do not
+drop this column, order alphabetically, or emit unrounded percentages.
 """
