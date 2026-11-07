@@ -1,0 +1,4 @@
+# Preferred reproducible setup: uv sync (uses uv.lock).
+# pip alternative: install this package and its declared core dependencies.
+# Original assignment requirements are preserved in docs/assignment-original/.
+-e .

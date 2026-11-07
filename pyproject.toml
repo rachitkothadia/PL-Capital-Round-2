@@ -13,6 +13,9 @@ dependencies = [
   "platformdirs>=4.5,<5", "filelock>=3.20,<4",
 ]
 
+[project.scripts]
+pl-capital = "pl_capital.cli:main"
+
 [project.optional-dependencies]
 graph = ["falkordblite>=0.9,<1; sys_platform != 'win32'"]
 
@@ -21,6 +24,11 @@ dev = ["pytest>=8,<10", "pytest-asyncio>=1,<2", "ruff>=0.14,<1", "build>=1.3,<2"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/pl_capital"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"data" = "pl_capital/resources/data"
+"database_schema.sql" = "pl_capital/resources/database_schema.sql"
+"ground_truth_dataset.json" = "pl_capital/resources/ground_truth_dataset.json"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
