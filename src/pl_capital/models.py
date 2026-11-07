@@ -8,7 +8,8 @@ Intent = Literal["sql_query", "exposure_calculator", "clarification_needed", "ou
 class Parameter(BaseModel):
     model_config = ConfigDict(extra="forbid")
     name: str
-    value: str | int | float | bool | None
+    # Groq rejects an integer|number union as overlapping JSON Schema types.
+    value: str | float | bool | None
 
 
 class Plan(BaseModel):
