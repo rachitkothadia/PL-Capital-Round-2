@@ -36,12 +36,18 @@ def test_verifier_generalizes_to_other_sectors(db_path):
     for sector in ["Technology", "Automotive", "Energy"]:
         result = execute(db_path, sql, {"sector": sector}).model_dump()
         assert verify_market_values(
-            db_path, f"Portfolio {sector} sector value and percentage", [sector], result
+            db_path,
+            f"For each portfolio show {sector} sector value and percentage",
+            [sector],
+            result,
         )
         result["rows"][0][3] /= 100
         with pytest.raises(QueryError, match="percentage"):
             verify_market_values(
-                db_path, f"Portfolio {sector} sector value and percentage", [sector], result
+                db_path,
+                f"For each portfolio show {sector} sector value and percentage",
+                [sector],
+                result,
             )
 
 

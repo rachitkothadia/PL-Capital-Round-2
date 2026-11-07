@@ -50,4 +50,7 @@ return exactly portfolio_name, sector_value, total_value, ROUND(percentage,2), i
 order, sorted by that percentage DESC unless the user explicitly requests another ordering. Include total_value even when the user only
 mentions the percentage: it makes the denominator independently auditable. Do not
 drop this column, order alphabetically, or emit unrounded percentages.
+Explicit user filters, a named fund, a different requested denominator, or an
+explicit ordering override these defaults. Respect those requests rather than
+forcing every query into an unfiltered cross-portfolio breakdown.
 """

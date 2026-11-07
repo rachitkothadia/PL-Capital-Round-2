@@ -23,14 +23,16 @@ def validate_audit_projection(sql: str, *, question: str = "") -> None:
     if not isinstance(tree, exp.Select):
         return
     projected = [p.this if isinstance(p, exp.Alias) else p for p in tree.expressions]
-    columns = {p.sql(dialect="sqlite").lower() for p in projected if isinstance(p, exp.Column)}
-    for projection in tree.expressions:
+    columns = {p.name.lower() for p in projected if isinstance(p, exp.Column)}
+    has_star = any(isinstance(p, exp.Star) or p.is_star for p in projected)
+    for index, projection in enumerate(tree.expressions, 1):
         divisions = list(projection.find_all(exp.Div))
         for division in divisions:
             denominator = division.expression
             if (
                 isinstance(denominator, exp.Column)
-                and denominator.sql(dialect="sqlite").lower() not in columns
+                and denominator.name.lower() not in columns
+                and not has_star
             ):
                 raise QueryError(
                     "Auditable ratios must include the denominator as a separate output column."
@@ -60,11 +62,21 @@ def validate_audit_projection(sql: str, *, question: str = "") -> None:
             continue
         order = tree.args.get("order")
         alias = projection.alias_or_name.lower()
+        first = order.expressions[0].this if order and order.expressions else None
+        body = projection.this if isinstance(projection, exp.Alias) else projection
+        equivalent = first is not None and (
+            first.name.lower() == alias
+            or isinstance(first, exp.Literal)
+            and not first.is_string
+            and first.this == str(index)
+            or first.sql(dialect="sqlite", normalize=True)
+            == body.sql(dialect="sqlite", normalize=True)
+        )
         if (
             not order
             or not order.expressions
             or not order.expressions[0].args.get("desc")
-            or order.expressions[0].this.name.lower() != alias
+            or not equivalent
         ):
             raise QueryError(
                 "Percentage breakdowns must use the documented default descending percentage ordering."

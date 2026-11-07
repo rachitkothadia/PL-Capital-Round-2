@@ -17,10 +17,21 @@ def verify_market_values(path, question: str, sector_names: list[str], result: d
     failed model query must be regenerated through the bounded correction path.
     """
     text = question.casefold()
+    # Apply only to the unfiltered cross-portfolio metric whose full population
+    # is unambiguous. Named funds, top-N and other denominators retain SQL's
+    # general path rather than being forced into this specialized contract.
+    if not re.search(
+        r"(?:for\s+(?:each|every|all)\s+(?:portfolio|fund)|(?:per|by)\s+portfolio)", text
+    ):
+        return False
+    if re.search(
+        r"\b(?:top|bottom|active|inactive|risk|aum|where|only|except|excluding|greater|fewer|largest|smallest)\b|assets under management|current_weight|recorded weight",
+        text,
+    ):
+        return False
     named = [name for name in sector_names if name.casefold() in text]
     if len(named) != 1 or not all(
         (
-            re.search(r"portfolio|fund", text),
             re.search(r"value|valuation", text),
             re.search(r"percent|\bshare\b|%", text),
         )
