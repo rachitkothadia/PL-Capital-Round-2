@@ -8,7 +8,7 @@ from pl_capital.models import Answer, TraceEvent
 
 class FakeAgent:
     def __init__(self, tmp_path: Path):
-        self.settings = SimpleNamespace(model="openai/gpt-oss-120b", cache_dir=tmp_path)
+        self.settings = SimpleNamespace(model="openai/gpt-oss-120b", cache_dir=tmp_path, data_root=tmp_path)
         self.graph = SimpleNamespace(status=lambda: {"backend": "sqlite", "reason": "test fallback"})
         self.questions = []
         self.resets = 0
@@ -101,3 +101,89 @@ async def test_agent_error_is_visible_without_crash(tmp_path):
         await send(app, pilot, "A question")
         assert "Groq unavailable" in app.query_one(".answer-body").source
         assert not app.busy
+
+
+@pytest.mark.asyncio
+async def test_trace_keyboard_toggle_and_copy_sql_export(tmp_path, monkeypatch):
+    from textual.widgets import Collapsible
+
+    from pl_capital.tui.app import CapitalApp
+
+    app = CapitalApp(FakeAgent(tmp_path))
+    copied = []
+    monkeypatch.setattr(app, "copy_to_clipboard", copied.append)
+    async with app.run_test(size=(120, 45)) as pilot:
+        await send(app, pilot, "Count portfolios")
+        trace = app.query_one(".execution-trace", Collapsible)
+        assert trace.collapsed
+        title = trace.query_one("CollapsibleTitle")
+        title.focus()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert not trace.collapsed
+        assert "Read-only SQL accepted" in str(app.query_one(".trace-detail").render())
+        await pilot.click(".copy-sql")
+        await pilot.pause()
+        assert copied == ["SELECT COUNT(*) FROM portfolios"]
+        assert (tmp_path / "last-query.sql").read_text() == copied[0] + "\n"
+        await send(app, pilot, "/trace")
+        assert trace.collapsed
+
+
+@pytest.mark.asyncio
+async def test_exposure_card_uses_both_denominators_and_coverage(tmp_path):
+    from pl_capital.tui.app import CapitalApp
+
+    agent = FakeAgent(tmp_path)
+    agent.answer_question = lambda _: Answer(
+        intent="exposure_calculator", tool="exposure_calculator", message="Recorded equity exposure.",
+        result={"portfolio_name": "Mixed fund", "sectors": [{"sector": "Technology", "weight": "0.4",
+        "whole_portfolio_pct": 40.0, "equity_normalized_pct": 100.0}], "equity_weight_total": "0.4",
+        "bond_weight_total": "0.6", "all_recorded_weights_total": "1.0", "equity_holding_count": 2,
+        "bond_exclusion_count": 3, "formula": "sector weight / stock weight"},
+        warnings=["Bonds excluded from the sector breakdown."],
+    )
+    app = CapitalApp(agent)
+    async with app.run_test(size=(100, 40)) as pilot:
+        await send(app, pilot, "Mixed fund exposure")
+        card = app.query_one(".exposure-card")
+        rendered = " ".join(str(widget.render()) for widget in card.query("Static"))
+        assert "40.00%" in rendered and "100.00%" in rendered
+        assert "0.6" in rendered and "3" in rendered
+        assert "Technology" in rendered
+
+
+@pytest.mark.asyncio
+async def test_eval_command_calls_real_evaluator_hook_without_blocking(tmp_path, monkeypatch):
+    import sys
+    from types import ModuleType
+
+    from pl_capital.tui.app import CapitalApp
+
+    calls = []
+
+    def evaluate(agent, root, *, report, live):
+        calls.append((agent, root, report, live))
+        return {"passed": 9, "total": 10, "accuracy": 0.9}
+
+    evaluator = ModuleType("pl_capital.evaluator")
+    evaluator.evaluate = evaluate
+    monkeypatch.setitem(sys.modules, "pl_capital.evaluator", evaluator)
+    agent = FakeAgent(tmp_path)
+    app = CapitalApp(agent)
+    async with app.run_test(size=(110, 36)) as pilot:
+        await send(app, pilot, "/eval")
+        assert calls == [(agent, tmp_path, tmp_path / "evaluation.json", True)]
+        assert not app.busy
+        rendered = " ".join(widget.source for widget in app.query("Markdown"))
+        assert "9/10" in rendered
+
+
+def test_display_redacts_credentials_and_terminal_controls():
+    from pl_capital.tui.widgets import plain, safe_json
+
+    assert "\x1b" not in plain("hello\x1b[31mworld")
+    assert "gsk_" not in plain("gsk_" + "a" * 50)
+    data = safe_json({"authorization": "bearer secret", "token": "sensitive", "rows": [[13]]})
+    assert "sensitive" not in data and "bearer secret" not in data
+    assert "13" in data

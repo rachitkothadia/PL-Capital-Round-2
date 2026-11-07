@@ -61,3 +61,13 @@ Screen {
 #model-status { color: #e4c683; }
 #status { height: 1; padding: 0 2; background: #213247; color: #c6e9e0; }
 Footer { background: #172235; }
+.execution-trace { height: auto; margin-top: 1; background: #121b29; border: round #40516b; }
+.trace-heading { height: auto; margin-top: 1; color: #8dd8cb; text-style: bold; }
+.trace-detail, .trace-data, .executed-sql { height: auto; margin-bottom: 1; }
+.copy-sql { margin: 1 0; min-width: 24; }
+.exposure-card { height: auto; padding: 1; margin: 1 0; border: round #52657c; background: #142b31; }
+.exposure-card Static { height: auto; }
+.exposure-heading { color: #99e5d5; text-style: bold; }
+.sector-row { margin: 1 0; }
+.exposure-totals { color: #ecd09b; margin: 1 0; }
+.exposure-formula { color: #b5c9dc; }

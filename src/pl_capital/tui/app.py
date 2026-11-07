@@ -7,7 +7,7 @@ from textual.app import App, ComposeResult, SystemCommand
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import Screen
-from textual.widgets import Footer, LoadingIndicator, Markdown, Static
+from textual.widgets import Collapsible, Footer, LoadingIndicator, Markdown, Static
 
 from pl_capital.config import MODELS
 from pl_capital.errors import CapitalError
@@ -25,6 +25,8 @@ Ask descriptive questions about the supplied historical portfolio snapshot.
 `/sessions` — list this run's sessions  
 `/model [model ID]` — inspect or switch the real Groq planner  
 `/graph` — inspect actual graph backend and fallback reason  
+`/trace` — expand or collapse recorded execution events  
+`/eval` — run all supplied questions through the live agent  
 `/quit` or `:q` — exit
 
 No live prices or personal investment recommendations. Session history stays in memory and ends when the app closes.
@@ -39,6 +41,7 @@ class CapitalApp(App):
         Binding("ctrl+q", "quit", "Quit"),
         Binding("ctrl+l", "new_session", "New session"),
         Binding("f1", "help", "Help"),
+        Binding("ctrl+t", "toggle_trace", "Trace", priority=True),
     ]
 
     def __init__(self, agent):
@@ -47,6 +50,8 @@ class CapitalApp(App):
         self.busy = False
         self.sessions = ["Session 1"]
         self.turn_count = 0
+        self.trace_expanded = False
+        self.session_number = 1
 
     def compose(self) -> ComposeResult:
         yield Static("PL CAPITAL  /  portfolio workspace", id="banner", markup=False)
@@ -100,6 +105,8 @@ class CapitalApp(App):
         yield SystemCommand("Portfolio help", "Show keyboard shortcuts and commands", self.action_help)
         yield SystemCommand("Graph backend status", "Inspect graph usage or SQLite fallback", self.action_graph)
         yield SystemCommand("Clear portfolio conversation", "Remove current messages and context", self.action_clear)
+        yield SystemCommand("Toggle execution traces", "Expand or collapse actual operational events", self.action_toggle_trace)
+        yield SystemCommand("Run live ground truth evaluation", "Call Groq for all supplied questions", self.action_evaluate)
 
     async def _append(self, widget) -> None:
         timeline = self.query_one("#timeline", VerticalScroll)
@@ -119,7 +126,10 @@ class CapitalApp(App):
             await self._notice("An analysis is running. Your next question remains in the composer.")
             return
         if event.text.startswith("/") or event.text == ":q":
-            await self._command(event.text)
+            try:
+                await self._command(event.text)
+            except CapitalError as exc:
+                await self._notice(plain(exc))
             return
         if len(event.text) > 4000:
             await self._notice("Keep questions under 4,000 characters.")
@@ -134,7 +144,7 @@ class CapitalApp(App):
         try:
             answer = await asyncio.to_thread(self.agent.answer_question, question)
             self.turn_count += 1
-            await self._append(AnswerCard(answer))
+            await self._append(AnswerCard(answer, trace_expanded=self.trace_expanded))
             self.query_one("#status", Static).update(
                 f"{'ACTION NEEDED' if answer.error else 'READY'}  ·  "
                 f"{answer.tool or answer.intent}  ·  {answer.elapsed_ms:.0f} ms"
@@ -173,6 +183,10 @@ class CapitalApp(App):
                 await self._notice("Choose one of the documented GPT-OSS model IDs with /model.")
         elif command == "/graph":
             await self.action_graph()
+        elif command == "/trace":
+            self.action_toggle_trace()
+        elif command == "/eval":
+            self.action_evaluate()
         else:
             await self._notice("Unknown command. Type /help for working commands.")
 
@@ -189,7 +203,8 @@ class CapitalApp(App):
     async def action_new_session(self) -> None:
         if self.busy:
             return
-        self.sessions.append(f"Session {len(self.sessions) + 1}")
+        self.session_number += 1
+        self.sessions.append(f"Session {self.session_number}")
         self.sessions = self.sessions[-10:]
         await self.action_clear()
         self.query_one("#session-list", Static).update("\n".join(self.sessions[-5:]))
@@ -197,3 +212,40 @@ class CapitalApp(App):
     async def action_graph(self) -> None:
         status = self.agent.graph.status()
         await self._notice("## Graph backend\n\n```json\n" + plain(json.dumps(status, indent=2), 6000) + "\n```")
+
+    def action_toggle_trace(self) -> None:
+        traces = list(self.query(".execution-trace"))
+        self.trace_expanded = not any(not trace.collapsed for trace in traces) if traces else not self.trace_expanded
+        for trace in traces:
+            if isinstance(trace, Collapsible):
+                trace.collapsed = not self.trace_expanded
+
+    def action_evaluate(self) -> None:
+        if self.busy:
+            return
+        self.busy = True
+        self.query_one("#loading").display = True
+        self.query_one("#status", Static).update("LIVE EVALUATION  ·  Running the supplied questions through Groq")
+        self.run_worker(self._evaluate(), name="live-evaluation", group="analysis")
+
+    async def _evaluate(self) -> None:
+        try:
+            from pl_capital.evaluator import evaluate
+
+            report = self.agent.settings.cache_dir / "evaluation.json"
+            result = await asyncio.to_thread(evaluate, self.agent, self.agent.settings.data_root,
+                                            report=report, live=True)
+            await self._notice(
+                f"## Live ground truth evaluation\n\n**{result['passed']}/{result['total']} passed**. "
+                "Each question ran through the real agent; expected values were derived independently.\n\n"
+                "Full report: application cache / `evaluation.json`."
+            )
+            self.query_one("#status", Static).update(f"READY  ·  Live evaluation: {result['passed']}/{result['total']} passed")
+        except CapitalError as exc:
+            await self._notice("Live evaluation could not complete: " + plain(exc))
+        except Exception:
+            await self._notice("Live evaluation could not complete. Check Groq configuration with pl-capital doctor and retry.")
+        finally:
+            self.busy = False
+            self.query_one("#loading").display = False
+            self.query_one("#composer").focus()
