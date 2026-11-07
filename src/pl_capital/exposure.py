@@ -2,7 +2,7 @@
 
 import re
 from collections import defaultdict
-from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
+from decimal import ROUND_HALF_UP, Decimal, DecimalException, InvalidOperation
 from difflib import SequenceMatcher
 from pathlib import Path
 
@@ -22,9 +22,10 @@ def resolve_portfolio(path: Path, name: str | int) -> tuple[int, str]:
     for ident, canonical in choices:
         if value == str(ident) or value == canonical.casefold():
             return ident, canonical
-    alias = lambda text: re.sub(
-        r"\s+", " ", re.sub(r"\b(fund|portfolio)\b", "", text.casefold())
-    ).strip()  # noqa: E731
+
+    def alias(text):
+        return re.sub(r"\s+", " ", re.sub(r"\b(fund|portfolio)\b", "", text.casefold())).strip()
+
     matches = [(i, n) for i, n in choices if value == alias(n)]
     if not matches:
         matches = [(i, n) for i, n in choices if value in n.casefold()]
@@ -66,8 +67,8 @@ def calculate(path: Path, portfolio: str | int) -> ExposureResult:
             weight = Decimal(str(row["current_weight"]))
         except InvalidOperation as exc:
             raise DataError("Holding weight is missing or invalid.") from exc
-        if not weight.is_finite() or weight < 0:
-            raise DataError("Holding weight must be finite and nonnegative.")
+        if not weight.is_finite() or weight < 0 or weight > 1:
+            raise DataError("Holding weight must be a finite fraction between 0 and 1.")
         if row["asset_type"] == "Stock":
             if not row["sector_name"]:
                 raise DataError("Stock holding lacks a valid sector mapping.")
@@ -91,7 +92,10 @@ def calculate(path: Path, portfolio: str | int) -> ExposureResult:
         )
 
     def percent(value):
-        return float(value.quantize(Decimal("0.000001"), rounding=ROUND_HALF_UP))
+        try:
+            return float(value.quantize(Decimal("0.000001"), rounding=ROUND_HALF_UP))
+        except DecimalException as exc:
+            raise DataError("Holding weights exceed the supported calculation precision.") from exc
 
     return ExposureResult(
         portfolio_id=ident,

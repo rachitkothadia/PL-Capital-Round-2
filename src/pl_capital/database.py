@@ -5,10 +5,11 @@ import hashlib
 import json
 import math
 import os
+import re
 import sqlite3
 import tempfile
 import time
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from pathlib import Path
 
 from filelock import FileLock
@@ -27,6 +28,7 @@ TABLES = (
     "risk_metrics",
 )
 EXPECTED_COUNTS = dict(zip(TABLES, (10, 30, 13, 13, 95, 24, 330, 44, 44), strict=True))
+MAX_RESULT_BYTES = 200_000
 SAFE_FUNCTIONS = frozenset(
     {
         "count",
@@ -86,11 +88,27 @@ def initialize(root: Path, path: Path, *, rebuild: bool = False) -> dict:
     with FileLock(str(path) + ".lock", timeout=20):
         if path.exists() and not rebuild:
             try:
-                with sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True) as conn:
-                    manifest = json.loads(
-                        conn.execute("SELECT manifest FROM _dataset_meta").fetchone()[0]
-                    )
-            except (sqlite3.Error, ValueError, TypeError) as exc:
+                with closing(
+                    sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)
+                ) as conn:
+                    rows = conn.execute("SELECT manifest FROM _dataset_meta").fetchall()
+                    if len(rows) != 1:
+                        raise ValueError("Invalid manifest row count.")
+                    manifest = json.loads(rows[0][0])
+                if not isinstance(manifest, dict) or set(manifest) != {"fingerprint", "counts"}:
+                    raise ValueError("Invalid manifest shape.")
+                if not isinstance(manifest["fingerprint"], str) or not re.fullmatch(
+                    r"[a-f0-9]{64}", manifest["fingerprint"]
+                ):
+                    raise ValueError("Invalid dataset fingerprint.")
+                counts = manifest["counts"]
+                if (
+                    not isinstance(counts, dict)
+                    or set(counts) != set(TABLES)
+                    or any(type(count) is not int or count < 0 for count in counts.values())
+                ):
+                    raise ValueError("Invalid manifest table counts.")
+            except (sqlite3.Error, ValueError, TypeError, KeyError) as exc:
                 raise DataError(
                     "Existing database is invalid; use init-db --rebuild explicitly."
                 ) from exc
@@ -101,7 +119,9 @@ def initialize(root: Path, path: Path, *, rebuild: bool = False) -> dict:
         os.close(fd)
         temp = Path(temp_name)
         try:
-            with sqlite3.connect(temp) as conn:
+            # A SQLite transaction context commits/rolls back but does not close.
+            # Close before atomic replacement, including on Windows and on errors.
+            with closing(sqlite3.connect(temp)) as conn, conn:
                 conn.execute("PRAGMA foreign_keys=ON")
                 conn.executescript((root / "database_schema.sql").read_text(encoding="utf-8"))
                 counts = {}
@@ -161,7 +181,7 @@ def readonly(path: Path, *, timeout: float = 2.0, max_steps: int = 2_000_000):
         conn.execute("PRAGMA foreign_keys=ON")
         conn.execute("PRAGMA query_only=ON")
         conn.enable_load_extension(False)
-        conn.setlimit(sqlite3.SQLITE_LIMIT_LENGTH, 1_000_000)
+        conn.setlimit(sqlite3.SQLITE_LIMIT_LENGTH, MAX_RESULT_BYTES)
         conn.setlimit(sqlite3.SQLITE_LIMIT_SQL_LENGTH, 30_000)
         conn.setlimit(sqlite3.SQLITE_LIMIT_COLUMN, 200)
         deadline, steps = time.monotonic() + timeout, 0
@@ -189,7 +209,7 @@ def readonly(path: Path, *, timeout: float = 2.0, max_steps: int = 2_000_000):
 
 def schema_context(path: Path) -> dict:
     """Trusted introspection; metadata never grants writes to the analytical connection."""
-    with sqlite3.connect(Path(path).resolve().as_uri() + "?mode=ro", uri=True) as conn:
+    with closing(sqlite3.connect(Path(path).resolve().as_uri() + "?mode=ro", uri=True)) as conn:
         return {t: {r[1]: r[2] for r in conn.execute(f'PRAGMA table_info("{t}")')} for t in TABLES}
 
 
