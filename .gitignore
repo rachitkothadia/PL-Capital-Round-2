@@ -11,6 +11,8 @@ build/
 dist/
 *.db
 *.db-*
+*.db.*
+*.rdb*
 *.sqlite*
 reports/
 .cache/
@@ -21,4 +23,3 @@ reports/
 graphify-out/
 PL_Capital_Codex_Master_Prompt*.md
 .work/
-*.svg
