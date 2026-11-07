@@ -39,6 +39,10 @@ def test_unavailable_native_is_actionable_and_safe(settings, monkeypatch):
 
     from pl_capital import graph
 
+    # Exercise dependency failure on a supported OS; Windows has its own
+    # earlier platform fallback, tested independently below.
+    monkeypatch.setattr(graph.sys, "platform", "linux")
+
     def unavailable():
         raise ImportError("simulated missing optional dependency")
 

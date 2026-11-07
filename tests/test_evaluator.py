@@ -145,7 +145,11 @@ def test_all_ten_questions_are_sent_to_agent_with_independent_references(setting
     assert len(agent.calls) == 10 and agent.resets == 10
     assert json.loads(output.read_text())["passed"] == 10
     assert "test-key" not in output.read_text()
-    assert not output.stat().st_mode & 0o077
+    # Windows exposes DOS permission bits here, not POSIX owner/group ACLs.
+    # The inherited directory ACL applies there; serialization checks above
+    # still enforce removal of credentials on every platform.
+    if __import__("os").name != "nt":
+        assert not output.stat().st_mode & 0o077
 
 
 def test_live_mode_cannot_label_mock_as_real(settings):
