@@ -104,15 +104,16 @@ async def test_agent_error_is_visible_without_crash(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_trace_keyboard_toggle_and_copy_sql_export(tmp_path, monkeypatch):
-    from textual.widgets import Collapsible
+@pytest.mark.parametrize("size", [(120, 45), (80, 24)], ids=["wide", "compact"])
+async def test_trace_keyboard_toggle_and_copy_sql_export(tmp_path, monkeypatch, size):
+    from textual.widgets import Button, Collapsible
 
     from pl_capital.tui.app import CapitalApp
 
     app = CapitalApp(FakeAgent(tmp_path))
     copied = []
     monkeypatch.setattr(app, "copy_to_clipboard", copied.append)
-    async with app.run_test(size=(120, 45)) as pilot:
+    async with app.run_test(size=size) as pilot:
         await send(app, pilot, "Count portfolios")
         trace = app.query_one(".execution-trace", Collapsible)
         assert trace.collapsed
@@ -122,7 +123,11 @@ async def test_trace_keyboard_toggle_and_copy_sql_export(tmp_path, monkeypatch):
         await pilot.pause()
         assert not trace.collapsed
         assert "Read-only SQL accepted" in str(app.query_one(".trace-detail").render())
-        await pilot.click(".copy-sql")
+        copy_button = app.query_one(".copy-sql", Button)
+        copy_button.focus(scroll_visible=False)
+        copy_button.scroll_visible(animate=False, immediate=True)
+        await pilot.pause()
+        assert await pilot.click(copy_button, offset=(2, 1))
         await pilot.pause()
         assert copied == ["SELECT COUNT(*) FROM portfolios"]
         assert (tmp_path / "last-query.sql").read_text() == copied[0] + "\n"
