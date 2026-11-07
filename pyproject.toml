@@ -25,6 +25,7 @@ packages = ["src/pl_capital"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 markers = ["graph: optional native FalkorDBLite integration", "live: real Groq network test"]
 
 [tool.ruff]
