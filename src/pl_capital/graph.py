@@ -4,6 +4,7 @@ import importlib
 import json
 import sqlite3
 import sys
+from contextlib import closing
 
 from filelock import FileLock
 
@@ -64,9 +65,9 @@ class GraphContext:
         }
 
     def _fallback(self, reason: str) -> None:
+        self.close()
         self._backend = "sqlite"
         self._reason = reason
-        self.close()
 
     def synchronize(self) -> None:
         """Idempotent MERGE ingestion under a per-cache interprocess lock.
@@ -79,7 +80,7 @@ class GraphContext:
             return
         path = self.settings.db_path.resolve()
         with FileLock(str(self.settings.cache_dir / "graph.lock"), timeout=10):
-            with sqlite3.connect(path.as_uri() + "?mode=ro", uri=True) as conn:
+            with closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)) as conn:
                 manifest = json.loads(
                     conn.execute("SELECT manifest FROM _dataset_meta").fetchone()[0]
                 )
@@ -213,10 +214,17 @@ class GraphContext:
             dict(zip(("portfolio", "symbol", "asset_type", "sector"), r, strict=True)) for r in rows
         ]
 
+    def retrieve(self, question: str) -> dict:
+        from pl_capital.retrieval import retrieve
+
+        return retrieve(self, question)
+
     def close(self) -> None:
         client, self._db = self._db, None
         self._graph = None
         if client is not None:
+            self._backend = "sqlite"
+            self._reason = "Graph connection closed; using SQLite metadata."
             try:
                 client.close()
             except Exception:

@@ -19,6 +19,18 @@ parameterized `GRAPH.RO_QUERY` traversals; users cannot submit Cypher.
 Graph values provide relationship context only. Quantitative answers always come
 from SQLite. Context and status explicitly identify actual native use or fallback.
 
+For each question, bounded token matching discovers portfolio and sector nodes.
+Fixed traversals retrieve their security/sector relationships, selected schema
+columns, and foreign-key join paths. Actual query text and parameter values appear
+in the returned context. Native retrieval uses `ro_query` exclusively. Context is
+capped below 20,000 JSON characters and does not contain graph-based financial
+calculations. The SQL planner separately receives authoritative SQLite schema.
+
+If a graph query fails mid-session, the adapter closes the native connection and
+returns SQLite-introspected schema, foreign keys, and matching entity hints. Its
+`used` field becomes false, backend becomes `sqlite`, and the fallback reason names
+the error category. A native outage cannot substitute fabricated graph evidence.
+
 The FalkorDBLite Python wrapper is BSD-3-Clause; the bundled FalkorDB engine has
 its own SSPL v1 license. Dependencies are installed separately, not bundled into
 this application's wheel. Review upstream terms for redistribution or hosting.
