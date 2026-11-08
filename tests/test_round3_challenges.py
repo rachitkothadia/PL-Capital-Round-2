@@ -355,8 +355,32 @@ def test_reported_aum_alias_preserves_value_checks(settings, references):
     case = load_questions(settings.data_root)[4]
     expected = references[5]
     actual = copy.deepcopy(expected)
-    index = actual['columns'].index('total_aum')
-    actual['columns'][index] = 'reported_aum'
-    assert compare_challenge(case, actual, expected)[0] == 'pass'
-    actual['rows'][0][index] += 1
-    assert compare_challenge(case, actual, expected)[0] == 'fail'
+    index = actual["columns"].index("total_aum")
+    actual["columns"][index] = "reported_aum"
+    assert compare_challenge(case, actual, expected)[0] == "pass"
+    actual["rows"][0][index] += 1
+    assert compare_challenge(case, actual, expected)[0] == "fail"
+
+
+@pytest.mark.parametrize(
+    "ident,field,alias",
+    [
+        (15, "nav_change_pct", "pct_nav_change"),
+        (15, "nav_change", "abs_nav_change"),
+        (7, "portfolio_a", "p1_name"),
+        (7, "portfolio_b", "p2_name"),
+        (11, "last_close_matches_current", "is_last_close_current"),
+    ],
+)
+def test_explicit_identifier_and_price_match_aliases_still_reject_wrong_values(
+    settings, references, ident, field, alias
+):
+    expected = references[ident]
+    actual = copy.deepcopy(expected)
+    index = actual["columns"].index(field)
+    actual["columns"][index] = alias
+    case = load_questions(settings.data_root)[ident - 1]
+    assert compare_challenge(case, actual, expected)[0] == "pass"
+    value = actual["rows"][0][index]
+    actual["rows"][0][index] = "Wrong portfolio" if isinstance(value, str) else 1 - value
+    assert compare_challenge(case, actual, expected)[0] == "fail"

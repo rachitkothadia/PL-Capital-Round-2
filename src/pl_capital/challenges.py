@@ -745,6 +745,12 @@ for _field, _aliases in {
     "end_date": "interval_end",
 }.items():
     ALIASES[_field] += " " + _aliases
+ALIASES["nav_change_pct"] += " pct_nav_change"
+ALIASES["nav_change"] += " abs_nav_change"
+ALIASES["portfolio_a"] += " p1_name"
+ALIASES["portfolio_b"] += " p2_name"
+ALIASES["last_close_matches_current"] += " is_last_close_current"
+
 FRACTION_FIELDS = {
     "jaccard_similarity",
     "equity_value_fraction",

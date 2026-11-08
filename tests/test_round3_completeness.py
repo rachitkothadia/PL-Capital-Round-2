@@ -91,3 +91,10 @@ def test_unrequested_simple_result_keeps_its_original_shape():
     from pl_capital.verification import validate_requested_output
 
     validate_requested_output("SELECT nav FROM portfolio_performance", "Show NAV observations")
+
+
+def test_sector_winner_comparison_requires_portfolio_identity():
+    from pl_capital.verification import validate_requested_output
+    sql = 'SELECT sector_name AS recorded_top_sector,1 AS recorded_top_pct,sector_name AS value_top_sector,2 AS value_top_pct,1 AS top_gap_pp FROM sectors'
+    with pytest.raises(QueryError, match='portfolio_name'):
+        validate_requested_output(sql, 'Identify largest equity sector twice where winning sector differs')

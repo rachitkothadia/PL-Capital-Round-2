@@ -168,6 +168,7 @@ def validate_requested_output(sql: str, question: str) -> None:
     if re.search(r"largest.+sector.+twice|winning sector differs", text):
         require(
             {
+                "portfolio_name",
                 "recorded_top_sector",
                 "recorded_top_pct",
                 "value_top_sector",
