@@ -55,6 +55,8 @@ class ExportService:
             "question": answer.question,
             "answer": view.headline,
             "intent": answer.intent,
+            "status": answer.status,
+            "next_step": answer.next_step,
             "tool": answer.tool,
             "result": answer.result,
             "sql": answer.executed_sql,

@@ -18,6 +18,8 @@ class TableView:
     rows: list[list[str]]
     total_rows: int
     truncated: bool = False
+    full_rows: list[list[str]] = field(default_factory=list)
+    full_columns: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -37,6 +39,8 @@ class AnswerView:
     warnings: list[str]
     table: TableView | None
     sections: list[EvidenceSection]
+    explanation_title: str = "How this was calculated"
+    next_step: str = ""
 
 
 def _number_units(text: str, column: str, currency: str | None) -> str:
@@ -47,17 +51,44 @@ def _number_units(text: str, column: str, currency: str | None) -> str:
         return text + "%"
     if any(word in label for word in ("ratio", "fraction", "weight", "share", "hhi")):
         return text
-    money = any(word in label for word in (
-        "price", "aum", "value", "cost_basis", "notional", "proceeds", "fees", "nav",
-    ))
+    money = any(
+        word in label
+        for word in (
+            "price",
+            "aum",
+            "value",
+            "cost_basis",
+            "notional",
+            "proceeds",
+            "fees",
+            "pnl",
+        )
+    )
     return "$" + text if money and currency == "USD" else text
 
 
 def format_cell(value, column: str = "", *, currency: str | None = None) -> str:
     if value is None:
-        return "Not available"
+        return "None (no sector losses)" if column == "top_loss_sector" else "Not available"
+    if isinstance(value, str) and len(value) < 150:
+        import re
+
+        if re.fullmatch(r"[-+]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)", value):
+            value = Decimal(value)
     if isinstance(value, bool):
         return "Yes" if value else "No"
+    if column in {
+        "pre_portfolio_value",
+        "post_portfolio_value",
+        "portfolio_pnl",
+        "pre_equity_value",
+        "post_equity_value",
+        "equity_pnl",
+        "pre_sector_equity_value",
+        "post_sector_equity_value",
+        "sector_pnl",
+    } and isinstance(value, int | float | Decimal):
+        return _number_units(format(Decimal(str(value)), ",.2f"), column, currency)
     if isinstance(value, int):
         return _number_units(f"{value:,}", column, currency)
     if isinstance(value, float | Decimal):
@@ -163,11 +194,17 @@ def _sql_sections(answer: Answer) -> tuple[list[str], list[EvidenceSection]]:
     if answer.result.get("rows"):
         cells = answer.result["rows"][0]
         columns = answer.result.get("columns", [])
-        checks.append("First returned record: " + "; ".join(
-            f"{column} = {format_cell(value, column, currency=answer.currency)}"
-            for column, value in list(zip(columns, cells, strict=True))[:8]
-        ) + ".")
-    checks.append("Display uses up to 10 significant digits; JSON export preserves returned numeric values.")
+        checks.append(
+            "First returned record: "
+            + "; ".join(
+                f"{column} = {format_cell(value, column, currency=answer.currency)}"
+                for column, value in list(zip(columns, cells, strict=True))[:8]
+            )
+            + "."
+        )
+    checks.append(
+        "Display uses up to 10 significant digits; JSON export preserves returned numeric values."
+    )
     if answer.result.get("truncated"):
         checks.append("The query result reached the row cap; it is incomplete.")
     if any(event.stage == "metric_verification" for event in answer.trace):
@@ -217,14 +254,67 @@ def build_answer_view(answer: Answer) -> AnswerView:
     table = None
     headline = answer.error or answer.message or "Analysis complete"
     message = ""
-    if answer.error:
-        steps, sections = (
-            [
-                "Analysis stopped safely; no successful answer is claimed.",
-                "Review the error and the rejected/proposed query in optional diagnostics.",
-            ],
-            [],
+    computed = (
+        not answer.error
+        and answer.status in {"success", "empty_result"}
+        and (
+            bool(answer.executed_sql)
+            or answer.tool in {"exposure_calculator", "scenario_analysis"}
+            and bool(result)
         )
+    )
+    explanation_title = "How this was calculated" if computed else "Why I couldn't calculate this"
+    if not computed:
+        steps, sections = [], []
+    elif answer.tool == "scenario_analysis":
+        headline = f"Hypothetical market shock — {len(result.get('portfolios', []))} portfolios"
+        rows, columns = result.get("rows", []), result.get("columns", [])
+        table = TableView(
+            [c.replace("_", " ") for c in columns],
+            [
+                [
+                    format_cell(v, c, currency=answer.currency)
+                    for c, v in zip(columns, row, strict=True)
+                ]
+                for row in rows[:8]
+            ],
+            len(rows),
+        )
+        shock_text = ", ".join(
+            f"{name}: {Decimal(str(change)) * 100}%"
+            for name, change in result.get("sector_shocks", {}).items()
+        )
+        steps = [
+            "Hypothetical scenario, not a forecast or recommendation.",
+            "Apply supplied price changes: " + shock_text + ".",
+            "Value each holding as quantity × supplied snapshot price, then multiply by (1 + its shock).",
+            "Portfolio return uses all listed holdings; equity return and normalized sector exposure use stocks only. Reported AUM is not a holdings-value denominator.",
+        ]
+        example = next(
+            (
+                h
+                for portfolio in result.get("portfolios", [])
+                for h in portfolio.get("holdings", [])
+                if h.get("pnl") and Decimal(str(h["pnl"])) != 0
+            ),
+            None,
+        )
+        evidence = []
+        if example:
+            evidence.append(
+                f"{example.get('symbol')}: before {example.get('pre_value')}; shock {example.get('shock')}; after {example.get('post_value')}; P&L {example.get('pnl')}."
+            )
+        evidence += [f"{name}: {value}" for name, value in result.get("totals", {}).items()]
+        formulas = result.get("formulas", {})
+        formula_lines = (
+            [f"{name}: {value}" for name, value in formulas.items()]
+            if isinstance(formulas, dict)
+            else list(formulas)
+        )
+        sections = [
+            EvidenceSection("Scenario formulas and reconciliation", [*formula_lines, *evidence]),
+            EvidenceSection("Scenario assumptions", result.get("assumptions", [])),
+        ]
     elif "sectors" in result:
         headline = f"{result.get('portfolio_name', 'Portfolio')} — sector exposure"
         if result.get("status") == "no_equity_holdings":
@@ -279,11 +369,16 @@ def build_answer_view(answer: Answer) -> AnswerView:
             )
         steps, sections = _sql_sections(answer)
     else:
-        steps = [
-            "No financial calculation was executed.",
-            answer.message or "Provide a descriptive portfolio question.",
+        steps, sections = [], []
+    if table and result.get("columns"):
+        table.full_columns = list(result["columns"])
+        table.full_rows = [
+            [
+                format_cell(v, c, currency=answer.currency)
+                for c, v in zip(result["columns"], row, strict=True)
+            ]
+            for row in result.get("rows", [])
         ]
-        sections = []
     retrieved = _retrieval(answer)
     graph_label = (
         "Graph context used" if retrieved.get("used") else "SQLite schema / graph fallback"
@@ -328,8 +423,42 @@ def build_answer_view(answer: Answer) -> AnswerView:
         warnings,
         table,
         sections,
+        explanation_title,
+        clean_text(answer.next_step),
     )
 
 
 def diagnostic_payload(answer: Answer, secret: str = "") -> dict:
     return redact(answer.model_dump(mode="json"), secret)
+
+
+def calculation_text(answer: Answer) -> str:
+    """Human-readable recorded scenario evidence suitable for explicit copying."""
+    if (
+        answer.tool != "scenario_analysis"
+        or not answer.result
+        or answer.error
+        or answer.status != "success"
+    ):
+        return ""
+    view = build_answer_view(answer)
+    lines = [view.headline, *view.steps]
+    columns = answer.result.get("columns", [])
+    lines.append(" | ".join(columns))
+    lines.extend(
+        " | ".join(
+            format_cell(value, column, currency=answer.currency)
+            for column, value in zip(columns, row, strict=True)
+        )
+        for row in answer.result.get("rows", [])
+    )
+    for portfolio in answer.result.get("portfolios", []):
+        lines.append(str(portfolio.get("portfolio_name", "Portfolio")))
+        for sector in portfolio.get("sectors", []):
+            lines.append(
+                f"{sector.get('sector', 'Unspecified sector')}: P&L {sector.get('sector_pnl', 'N/A')}; post equity share {sector.get('post_equity_normalized_sector_exposure_pct', 'N/A')}%; post portfolio share {sector.get('post_whole_portfolio_sector_exposure_pct', 'N/A')}%."
+            )
+    for section in view.sections:
+        if section.title.startswith("Scenario"):
+            lines += [section.title, *section.lines]
+    return clean_text("\n".join(lines))

@@ -1,8 +1,29 @@
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-Intent = Literal["sql_query", "exposure_calculator", "clarification_needed", "out_of_scope"]
+from pl_capital.scenario import ScenarioRequest
+
+AnswerStatus = Literal[
+    "success",
+    "empty_result",
+    "missing_data",
+    "unsupported_analysis",
+    "needs_clarification",
+    "out_of_domain",
+    "tool_error",
+]
+Intent = Literal[
+    "sql_query",
+    "exposure_calculator",
+    "scenario_analysis",
+    "clarification_needed",
+    "out_of_scope",
+    "needs_clarification",
+    "missing_data",
+    "unsupported_analysis",
+    "out_of_domain",
+]
 
 
 class Parameter(BaseModel):
@@ -21,6 +42,7 @@ class Plan(BaseModel):
     parameters: list[Parameter]
     portfolio: str | None
     message: str | None
+    scenario: ScenarioRequest | None = None
 
 
 class TraceEvent(BaseModel):
@@ -31,6 +53,8 @@ class TraceEvent(BaseModel):
 
 
 class Answer(BaseModel):
+    status: AnswerStatus | None = None
+    next_step: str = ""
     question: str = ""
     intent: Intent = "clarification_needed"
     tool: str | None = None
@@ -47,6 +71,35 @@ class Answer(BaseModel):
     assumptions: list[str] = Field(default_factory=list)
     source_dates: dict[str, list[str | None]] = Field(default_factory=dict)
     currency: str | None = None
+
+    @model_validator(mode="after")
+    def infer_status(self):
+        if self.status is None:
+            if self.error:
+                self.status = "tool_error"
+            elif self.result:
+                self.status = (
+                    "empty_result"
+                    if "columns" in self.result and not self.result.get("rows")
+                    else "success"
+                )
+            else:
+                self.status = {
+                    "out_of_scope": "out_of_domain",
+                    "clarification_needed": "needs_clarification",
+                }.get(
+                    self.intent,
+                    self.intent
+                    if self.intent
+                    in {
+                        "needs_clarification",
+                        "missing_data",
+                        "unsupported_analysis",
+                        "out_of_domain",
+                    }
+                    else "needs_clarification",
+                )
+        return self
 
 
 class QueryResult(BaseModel):

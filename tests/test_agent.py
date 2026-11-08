@@ -98,7 +98,7 @@ def test_injection_and_advice_never_reach_planner(settings):
             "a" * 4001,
         ]:
             answer = agent.answer_question(question)
-            assert answer.error or answer.intent == "out_of_scope"
+            assert answer.status in {"out_of_domain", "needs_clarification"}
         assert fake.calls == []
     finally:
         agent.close()

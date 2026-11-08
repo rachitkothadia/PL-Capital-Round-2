@@ -33,6 +33,18 @@ class ClipboardService:
             return ClipboardOutcome(
                 False, "none", "No safe executed SQL is available for this answer."
             )
+        return self._copy_text(sql, terminal_copy=terminal_copy)
+
+    def copy_calculation(self, answer: Answer, *, terminal_copy=None) -> ClipboardOutcome:
+        from pl_capital.presentation import calculation_text
+
+        text = calculation_text(answer)
+        if not text or clean_text(text, self._secret) != text:
+            return ClipboardOutcome(False, "none", "No safe completed calculation is available to copy.")
+        outcome = self._copy_text(text, terminal_copy=terminal_copy)
+        return ClipboardOutcome(outcome.confirmed, outcome.mechanism, outcome.message.replace("SQL", "Calculation"))
+
+    def _copy_text(self, sql: str, *, terminal_copy=None) -> ClipboardOutcome:
         requested = False
         if terminal_copy is not None:
             try:

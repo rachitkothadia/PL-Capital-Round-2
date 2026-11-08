@@ -125,3 +125,121 @@ def verify_market_values(path, question: str, sector_names: list[str], result: d
             "Market-value verification encountered invalid data or result types."
         ) from exc
     return True
+
+
+def validate_requested_output(sql: str, question: str) -> None:
+    """Reject incomplete audit projections; never inject query text or answers."""
+    tree = sqlglot.parse_one(sql, read="sqlite")
+    outer = list(tree.selects)
+    names = {
+        node.name.casefold() for projection in outer for node in projection.find_all(exp.Column)
+    }
+    aliases = {projection.alias_or_name.casefold() for projection in outer}
+    text = question.casefold()
+
+    def require(fields, explanation):
+        missing = set(fields) - aliases
+        if missing:
+            raise QueryError(
+                explanation + " Include outer output fields: " + ", ".join(sorted(missing)) + "."
+            )
+
+    if "nav" in text and re.search(r"first.+last|first.+latest", text):
+        require(
+            {"first_nav", "last_nav", "first_date", "last_date"},
+            "Observed NAV comparisons must expose both source observations and dates.",
+        )
+    if re.search(r"var|value.at.risk", text) and re.search(r"first.+last", text):
+        require(
+            {"first_date", "last_date"},
+            "Historical risk comparisons must expose the dates of both observations.",
+        )
+    if "bond" in text and re.search(r"each bond|every bond", text):
+        require({"symbol"}, "Identify every individual bond unambiguously.")
+    if (
+        re.search(r"for (?:each|every|all) portfolio", text)
+        and "aum" in text
+        and "holding" in text
+        and tree.args.get("limit") is not None
+    ):
+        raise QueryError(
+            "Return every requested portfolio. Rank all rows and flag the largest mismatches; do not replace the full population with a top-N LIMIT."
+        )
+    if re.search(r"largest.+sector.+twice|winning sector differs", text):
+        require(
+            {
+                "recorded_top_sector",
+                "recorded_top_pct",
+                "value_top_sector",
+                "value_top_pct",
+                "top_gap_pp",
+            },
+            "Expose each metric's own winning sector and percentage; top_gap_pp is value_top_pct minus recorded_top_pct, not two shares of one sector or an absolute difference.",
+        )
+    if "bond weight" in text and "stock weight" in text and "equity-only" in text:
+        require(
+            {
+                "bond_weight",
+                "equity_weight",
+                "recorded_total",
+                "sector_weight",
+                "portfolio_pct",
+                "equity_pct",
+                "weights_sum_to_100",
+            },
+            "Return one row per stock sector and show raw recorded weights plus separately labeled whole-recorded and equity-normalized percentages (100 times their fractions); bonds are a separate weight, never an equity sector.",
+        )
+    if (
+        "current_weight" in text
+        and "normalized" in text
+        and re.search(r"holding.+share|share of stock market value", text)
+    ):
+        require(
+            {
+                "equity_weight_total",
+                "equity_market_value",
+                "recorded_equity_pct",
+                "market_value_pct",
+                "discrepancy_pp",
+                "abs_discrepancy_pp",
+            },
+            "Holding-share comparisons must expose both denominators, both percentages, their signed difference (market minus recorded), and its absolute magnitude.",
+        )
+    if "best" in text and "worst" in text and re.search(r"first.+last.+close", text):
+        require(
+            {"extreme"},
+            "Label the best and worst historical-return groups with extreme='best' or 'worst'; preserve both requested groups and their ranking.",
+        )
+    if re.search(r"latest common date|latest synchronized date|latest shared date", text):
+        if not any("date" in name for name in names | aliases):
+            raise QueryError(
+                "Include the selected common date in the outer output for date-aligned risk/performance analysis."
+            )
+    if (
+        re.search(r"\b(?:list|every|each)\b", text)
+        and re.search(r"\bsell\b", text)
+        and "transaction" in text
+        and not re.search(r"aggregate|per portfolio|total sell|sum", text)
+    ):
+        if "transaction_id" not in names | aliases:
+            raise QueryError(
+                "Include transaction_id so every listed transaction can be audited independently."
+            )
+    if (
+        "sector" in text
+        and re.search(r"no securit|no security|unassigned|empty sector", text)
+        and "holding" in text
+    ):
+        if not ({"security_count", "holding_count"} <= aliases):
+            raise QueryError(
+                "Verify empty sectors with explicit security_count and holding_count outputs, including zero counts."
+            )
+    if (
+        "nav" in text
+        and re.search(r"percentage|percent|nav %", text)
+        and re.search(r"change|comparison|compare", text)
+    ):
+        if not any(re.search(r"pct|percent", name) for name in aliases):
+            raise QueryError(
+                "Include NAV percentage change as requested, using the previous NAV denominator and NULL for unavailable/zero prior NAV."
+            )

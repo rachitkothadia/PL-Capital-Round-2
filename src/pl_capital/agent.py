@@ -5,19 +5,23 @@ import sqlite3
 import time
 from dataclasses import replace
 
+from pydantic import ValidationError
+
 from pl_capital.config import MODELS, Settings
 from pl_capital.database import initialize, readonly, schema_context
-from pl_capital.errors import CapitalError, EntityError, PlanningError, QueryError
+from pl_capital.errors import CapitalError, DataError, EntityError, PlanningError, QueryError
 from pl_capital.exposure import calculate, resolve_portfolio
 from pl_capital.gemini_client import GeminiPlanner
 from pl_capital.graph import GraphContext
 from pl_capital.models import Answer, TraceEvent
 from pl_capital.redaction import clean_text
+from pl_capital.scenario import calculate_scenario
 from pl_capital.sql_safety import validate, validate_audit_projection
 from pl_capital.sql_tool import execute
 from pl_capital.verification import (
     market_value_sector,
     validate_average_precision,
+    validate_requested_output,
     verify_market_values,
 )
 
@@ -126,14 +130,18 @@ class PortfolioAgent:
 
         try:
             if not isinstance(question, str) or not question.strip() or len(question) > 4000:
-                raise PlanningError("Enter a question between 1 and 4000 characters.")
+                answer.status = "needs_clarification"
+                answer.message = "Enter a question between 1 and 4000 characters."
+                return answer
             if INJECTION.search(question):
-                answer.intent = "out_of_scope"
+                answer.intent = "out_of_domain"
+                answer.status = "out_of_domain"
                 answer.message = "This tool supports read-only portfolio analytics. Secret access, file access and policy overrides are outside its scope."
                 event("boundary", "Untrusted instruction rejected before planning.")
                 return answer
             if ADVICE.search(question):
-                answer.intent = "out_of_scope"
+                answer.intent = "out_of_domain"
+                answer.status = "out_of_domain"
                 answer.message = "Personal investment recommendations are outside this tool's scope. Ask for descriptive analysis of the supplied holdings."
                 event("boundary", "Personal investment advice is unsupported.")
                 return answer
@@ -167,20 +175,50 @@ class PortfolioAgent:
             event("classification", "Validated structured tool selection.", {"intent": plan.intent})
             answer.intent, answer.tool = (
                 plan.intent,
-                plan.intent if plan.intent in {"sql_query", "exposure_calculator"} else None,
+                plan.intent
+                if plan.intent in {"sql_query", "exposure_calculator", "scenario_analysis"}
+                else None,
             )
-            if plan.intent in {"clarification_needed", "out_of_scope"}:
+            if plan.intent in {
+                "clarification_needed",
+                "out_of_scope",
+                "needs_clarification",
+                "unsupported_analysis",
+                "missing_data",
+                "out_of_domain",
+            }:
+                answer.status = {
+                    "clarification_needed": "needs_clarification",
+                    "out_of_scope": "out_of_domain",
+                }.get(plan.intent, plan.intent)
                 answer.message = (
                     plan.message
                     or "Specify a descriptive question about the supplied portfolio dataset."
                 )
                 return answer
-            if plan.intent == "exposure_calculator":
+            if plan.intent == "scenario_analysis":
+                if plan.scenario is None:
+                    answer.status = "needs_clarification"
+                    answer.message = "Specify sector price changes, such as Technology -22%, and the portfolios to analyze."
+                    return answer
+                answer.result = calculate_scenario(self.settings.db_path, plan.scenario)
+                answer.currency = answer.result.get("currency")
+                answer.assumptions = answer.result.get("assumptions", [])
+                answer.warnings.extend(answer.result.get("warnings", []))
+                answer.status = "success"
+                answer.message = f"Hypothetical scenario: {len(answer.result['portfolios'])} portfolios calculated from supplied holdings."
+                event(
+                    "calculation",
+                    "Deterministic Decimal price shocks; no model arithmetic or AUM denominator.",
+                    answer.result,
+                )
+            elif plan.intent == "exposure_calculator":
                 entity = plan.portfolio or self.previous_portfolio
                 if not entity:
                     raise EntityError("Which portfolio should the exposure calculator analyze?")
                 result = calculate(self.settings.db_path, entity)
                 answer.result = result.model_dump(mode="json")
+                answer.status = "success"
                 answer.warnings.extend(result.warnings)
                 self.previous_portfolio = result.portfolio_name
                 event(
@@ -207,7 +245,8 @@ class PortfolioAgent:
                         # A SQL plan can compare several named funds; the optional
                         # context label must not turn that set into a single entity.
                         named_portfolios = [
-                            name for name in context["portfolio_names"]
+                            name
+                            for name in context["portfolio_names"]
                             if plan.portfolio and name.casefold() in plan.portfolio.casefold()
                         ]
                         resolved_portfolio = (
@@ -222,6 +261,7 @@ class PortfolioAgent:
                         )
                         sql, tables = validate(plan.sql, params, context["schema"])
                         validate_average_precision(sql, question)
+                        validate_requested_output(sql, question)
                         if market_value_sector(question, context["sector_names"]) is not None:
                             validate_audit_projection(sql, question=question)
                         event(
@@ -247,6 +287,7 @@ class PortfolioAgent:
                                 "Sector market values, all-holding denominator, percentage units and portfolio membership independently checked.",
                             )
                         answer.result = result.model_dump(mode="json")
+                        answer.status = "success" if result.rows else "empty_result"
                         answer.sql = answer.executed_sql = sql
                         answer.executed_parameters = dict(params)
                         if "transactions" in result.source_tables:
@@ -267,6 +308,46 @@ class PortfolioAgent:
                             answer.message = f"{result.columns[0]}: {result.rows[0][0] if result.rows[0][0] is not None else 'No data'}"
                         else:
                             answer.message = f"Found {result.row_count} matching record{'s' if result.row_count != 1 else ''} in the supplied snapshot."
+                        observation_tables = set(result.source_tables) & {
+                            "portfolio_performance",
+                            "risk_metrics",
+                        }
+                        requested_names = [
+                            name
+                            for name in context["portfolio_names"]
+                            if name.casefold() in question.casefold()
+                        ]
+                        if resolved_portfolio and resolved_portfolio not in requested_names:
+                            requested_names.append(resolved_portfolio)
+                        if (
+                            observation_tables
+                            and requested_names
+                            and re.search(
+                                r"latest|nav|sharpe|beta|volatil|performance|value.at.risk",
+                                question,
+                                re.I,
+                            )
+                            and not re.search(r"missing|coverage|count|how many", question, re.I)
+                        ):
+                            unavailable = []
+                            with readonly(self.settings.db_path) as conn:
+                                for table in sorted(observation_tables):
+                                    for name in requested_names:
+                                        # Table identifiers are a fixed allowlist; fund names remain bound values.
+                                        count = conn.execute(
+                                            f"SELECT COUNT(*) FROM {table} o JOIN portfolios p USING(portfolio_id) WHERE p.portfolio_name=?",  # noqa: S608 -- fixed table allowlist above
+                                            (name,),
+                                        ).fetchone()[0]
+                                        if not count:
+                                            unavailable.append(f"{table}: {name}")
+                            if unavailable:
+                                answer.status = "missing_data"
+                                answer.message = (
+                                    "Requested observations are absent from the supplied snapshot: "
+                                    + "; ".join(unavailable)
+                                    + ". Missing observations are not zero."
+                                )
+                                event("coverage", answer.message, {"unavailable": unavailable})
                         if resolved_portfolio:
                             self.previous_portfolio = resolved_portfolio
                         break
@@ -295,7 +376,21 @@ class PortfolioAgent:
                 {"token_usage": usage},
             )
             return answer
+        except ValidationError:
+            answer.status = "needs_clarification"
+            answer.message = "Invalid scenario inputs: use finite fractional shocks between -1 and 10, valid names and no executable expressions."
+            return answer
+        except DataError as exc:
+            answer.status = (
+                "missing_data"
+                if re.search(r"missing|unavailable|lacks|cannot read", str(exc), re.I)
+                else "tool_error"
+            )
+            answer.message = str(exc)
+            answer.error = str(exc) if answer.status == "tool_error" else None
+            return answer
         except EntityError as exc:
+            answer.status = "needs_clarification"
             answer.intent, answer.tool = "clarification_needed", None
             answer.message = str(exc)
             event(
@@ -305,16 +400,33 @@ class PortfolioAgent:
             )
             return answer
         except CapitalError as exc:
+            answer.status = "tool_error"
             answer.error = answer.message = str(exc)
             event("error", "Analysis stopped safely.", {"error": str(exc)})
             return answer
         except (sqlite3.Error, OSError, ValueError, TypeError, RuntimeError) as exc:
+            answer.status = "tool_error"
             answer.error = answer.message = (
                 f"Analysis unavailable ({type(exc).__name__}); run doctor and retry."
             )
             event("error", "Unexpected boundary failure; internal details withheld.")
             return answer
         finally:
+            if answer.status == "needs_clarification" and answer.error:
+                answer.status = "tool_error"
+            if answer.status not in {"success", "empty_result"}:
+                answer.next_step = {
+                    "needs_clarification": "Specify the missing portfolio, dates or fractional shock parameters.",
+                    "missing_data": "Use available snapshot observations or supply the missing source data.",
+                    "unsupported_analysis": "Use supported SQL, recorded exposure or sector price-shock analysis.",
+                    "out_of_domain": "Ask a descriptive question about the supplied portfolio snapshot.",
+                    "tool_error": "Check doctor and the recorded validation error; retry after correcting the service or input issue.",
+                }.get(answer.status, "Review the request and retry.")
+            event(
+                "outcome",
+                "Canonical execution outcome.",
+                {"status": answer.status, "next_step": answer.next_step},
+            )
             answer.elapsed_ms = round((time.perf_counter() - start) * 1000, 3)
 
     def close(self):
