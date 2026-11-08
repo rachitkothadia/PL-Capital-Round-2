@@ -86,10 +86,25 @@ def reference_results(data_root: Path, db_path: Path, *, ids=None) -> dict[int, 
                 "row_count": len(rows),
                 "truncated": False,
             }
+            result["optional_columns"] = _sql_optional_columns(connection, result)
             if len(json.dumps(result, allow_nan=False).encode()) > 1_000_000:
                 raise DataError("Challenge reference exceeded its 1 MB output budget.")
             results[case["id"]] = result
     return results
+
+
+def _sql_optional_columns(connection: sqlite3.Connection, result: dict) -> dict[str, list]:
+    """Validate selected descriptive extras against SQLite, without changing base row shapes."""
+    optional = {}
+    for key, field, query in (
+        ("symbol", "company_name", "SELECT symbol,company_name FROM securities"),
+        ("sector_name", "sector_description", "SELECT sector_name,sector_description FROM sectors"),
+    ):
+        if key in result["columns"] and field not in result["columns"]:
+            catalog = dict(connection.execute(query))
+            index = result["columns"].index(key)
+            optional[field] = [catalog[row[index]] for row in result["rows"]]
+    return optional
 
 
 def _decimal(value) -> Decimal:
@@ -103,7 +118,7 @@ def _number(value):
     return float(value) if isinstance(value, Decimal) else value
 
 
-def _python_references(path: Path) -> dict[int, list[dict]]:
+def _python_references(path: Path, *, include_metadata: bool = False) -> dict[int, list[dict]]:
     """Pure Python group/set/time-series calculations, not SQL-oracle replay."""
     with closing(_connect(path)) as connection:
         data = {
@@ -196,7 +211,11 @@ def _python_references(path: Path) -> dict[int, list[dict]]:
     answers[1].sort(key=lambda row: row["portfolio_name"])
     answers[3].sort(key=lambda row: (-row["hhi"], row["portfolio_name"]))
     answers[6].sort(
-        key=lambda row: (-row["abs_discrepancy_pp"].quantize(Decimal("0.0000000001")), row["portfolio_name"], row["symbol"])
+        key=lambda row: (
+            -row["abs_discrepancy_pp"].quantize(Decimal("0.0000000001")),
+            row["portfolio_name"],
+            row["symbol"],
+        )
     )
     answers[6] = answers[6][:10]
     for ident, portfolio in portfolios.items():
@@ -415,6 +434,20 @@ def _python_references(path: Path) -> dict[int, list[dict]]:
     answers[18].sort(key=lambda row: (row["transaction_date"], row["transaction_id"]))
     answers[19].sort(key=lambda row: (row["portfolio_name"], row["symbol"]))
     answers[20].sort(key=lambda row: row["portfolio_name"])
+    if include_metadata:
+        # Independent lookup over the full raw source records already loaded above.
+        companies = {
+            security["symbol"]: security["company_name"] for security in securities.values()
+        }
+        descriptions = {
+            sector["sector_name"]: sector["sector_description"] for sector in sectors.values()
+        }
+        for rows in answers.values():
+            for row in rows:
+                if "symbol" in row and "company_name" not in row:
+                    row["company_name"] = companies[row["symbol"]]
+                if "sector_name" in row and "sector_description" not in row:
+                    row["sector_description"] = descriptions[row["sector_name"]]
     return {
         ident: [{key: _number(value) for key, value in row.items()} for row in rows]
         for ident, rows in answers.items()
@@ -603,7 +636,7 @@ ALIASES = {
     "holdings_market_value": "holdings_value total_holdings_value listed_holdings_value market_value total_market_value",
     "difference": "aum_minus_holdings aum_gap dollar_difference aum_difference mismatch holdings_minus_aum",
     "holdings_to_aum_ratio": "coverage_ratio holdings_aum_ratio holdings_to_aum aum_ratio aum_to_holdings_ratio",
-    "aum_coverage_pct": "coverage_pct coverage_percentage aum_percentage percent_of_aum holdings_coverage_pct",
+    "aum_coverage_pct": "coverage_pct coverage_percentage aum_percentage percent_of_aum holdings_coverage_pct aum_percentage_represented",
     "mismatch_rank": "rank mismatch_position discrepancy_rank",
     "is_top_five": "is_top_5 top_five top5 largest_five",
     "current_weight": "recorded_weight holding_weight",
@@ -681,6 +714,37 @@ ALIASES = {
     "bond_holding_count": "bond_count bond_holdings",
     "equity_sector_count": "stock_sector_count sector_count distinct_equity_sectors distinct_stock_sectors",
 }
+# These aliases have one meaning within the corresponding reference schema. No
+# value-magnitude inference or fuzzy column matching is allowed.
+for _field, _aliases in {
+    "recorded_top_sector": "weight_winner",
+    "recorded_top_pct": "weight_winner_pct",
+    "value_top_sector": "top_market_sector market_winner",
+    "value_top_pct": "top_market_pct market_winner_pct",
+    "top_gap_pp": "gap_pct gap_pct_points",
+    "equity_market_value": "total_stock_value",
+    "discrepancy_pp": "discrepancy_pct",
+    "holdings_to_aum_ratio": "ratio",
+    "aum_coverage_pct": "percentage_of_aum",
+    "abs_discrepancy_pp": "abs_percentage_point_diff",
+    "equity_value_fraction": "fraction fraction_of_total",
+    "last_close_matches_current": "matches_current price_match",
+    "longest_decline_streak": "max_len",
+    "intraday_range_pct": "percentage",
+    "observation_count": "obs_count",
+    "first_var_95": "first_var",
+    "last_var_95": "last_var",
+    "magnitude_change": "abs_magnitude_change",
+    "total_fees": "total_transaction_fees",
+    "bond_share_pct": "bond_share bond_share_fraction",
+    "portfolio_a": "name_a",
+    "portfolio_b": "name_b",
+    "market_value_pct": "calculated_weight",
+    "recorded_equity_pct": "normalized_recorded_weight",
+    "start_date": "interval_start",
+    "end_date": "interval_end",
+}.items():
+    ALIASES[_field] += " " + _aliases
 FRACTION_FIELDS = {
     "jaccard_similarity",
     "equity_value_fraction",
@@ -741,6 +805,22 @@ def _unit(value, canonical: str, actual_label: str):
     if value is None:
         return value
     normalized = _label(actual_label)
+    if (
+        (
+            (canonical == "market_value_pct" and normalized == "calculatedweight")
+            or (canonical == "recorded_equity_pct" and normalized == "normalizedrecordedweight")
+        )
+        and isinstance(value, int | float)
+        and not isinstance(value, bool)
+    ):
+        return value * 100
+    if (
+        canonical == "bond_share_pct"
+        and normalized in {"bondshare", "bondsharefraction"}
+        and isinstance(value, int | float)
+        and not isinstance(value, bool)
+    ):
+        return value * 100
     if canonical in FLAGS:
         if isinstance(value, bool):
             return int(value)
@@ -797,6 +877,24 @@ def compare_challenge(case: dict, actual: dict, expected: dict) -> tuple[str, st
         return "inconclusive", "Agent result has an unknown or malformed row/column shape."
     if actual.get("row_count") != len(rows):
         return "fail", "Declared row count differs from actual returned rows."
+    optional = expected.get("optional_columns", {})
+    if not isinstance(optional, dict) or any(
+        name in expected["columns"]
+        or not isinstance(values, list)
+        or len(values) != len(expected["rows"])
+        for name, values in optional.items()
+    ):
+        return "inconclusive", "Independent optional-column reference has an invalid shape."
+    # Descriptions are compared row by row just like financial values. They are
+    # never ignored, and cannot supply an omitted required calculation.
+    expected = {
+        **expected,
+        "columns": [*expected["columns"], *optional],
+        "rows": [
+            [*row, *(values[index] for values in optional.values())]
+            for index, row in enumerate(expected["rows"])
+        ],
+    }
     mapping = {}
     for index, name in enumerate(columns):
         direct = [field for field in expected["columns"] if _label(name) == _label(field)]
@@ -829,16 +927,26 @@ def compare_challenge(case: dict, actual: dict, expected: dict) -> tuple[str, st
         # An unordered portfolio pair is the same pair in either orientation.
         # Similarity ranking is required; equal-score pairs can appear in any order.
         for collection in (normalized, wanted):
-            keys = ("portfolio_a_id", "portfolio_b_id") if {"portfolio_a_id", "portfolio_b_id"} <= set(fields) else ("portfolio_a", "portfolio_b")
+            keys = (
+                ("portfolio_a_id", "portfolio_b_id")
+                if {"portfolio_a_id", "portfolio_b_id"} <= set(fields)
+                else ("portfolio_a", "portfolio_b")
+            )
             left, right = (fields.index(name) for name in keys)
             for row in collection:
                 if row[left] > row[right]:
-                    for a, b in (("portfolio_a_id", "portfolio_b_id"), ("portfolio_a", "portfolio_b")):
+                    for a, b in (
+                        ("portfolio_a_id", "portfolio_b_id"),
+                        ("portfolio_a", "portfolio_b"),
+                    ):
                         if a in fields and b in fields:
                             i, j = fields.index(a), fields.index(b)
                             row[i], row[j] = row[j], row[i]
         score = fields.index("jaccard_similarity")
-        ranked = all(float(a[score]) >= float(b[score]) - 1e-9 for a, b in zip(normalized, normalized[1:], strict=False))
+        ranked = all(
+            float(a[score]) >= float(b[score]) - 1e-9
+            for a, b in zip(normalized, normalized[1:], strict=False)
+        )
         matched = ranked and _rows_equal(normalized, wanted, False)
     else:
         matched = _rows_equal(normalized, wanted, case["ordered"])
@@ -858,16 +966,21 @@ def compare_challenge(case: dict, actual: dict, expected: dict) -> tuple[str, st
 def verify_references(data_root: Path, db_path: Path) -> dict:
     cases = load_questions(data_root)
     sql_results = reference_results(data_root, db_path)
-    python_rows = _python_references(db_path)
+    python_rows = _python_references(db_path, include_metadata=True)
     items = []
     for case in cases:
         result = sql_results[case["id"]]
         calculated = python_rows[case["id"]]
-        if any(set(row) != set(result["columns"]) for row in calculated):
+        columns = [*result["columns"], *result["optional_columns"]]
+        sql_rows = [
+            [*row, *(values[index] for values in result["optional_columns"].values())]
+            for index, row in enumerate(result["rows"])
+        ]
+        if any(set(row) != set(columns) for row in calculated):
             status, reason = "fail", "Independent Python fields differ from SQL reference columns."
         else:
-            rows = [[row[field] for field in result["columns"]] for row in calculated]
-            status = "pass" if _rows_equal(result["rows"], rows, case["ordered"]) else "fail"
+            rows = [[row[field] for field in columns] for row in calculated]
+            status = "pass" if _rows_equal(sql_rows, rows, case["ordered"]) else "fail"
             reason = (
                 "SQL reference agrees with independent Python data calculations."
                 if status == "pass"
@@ -943,7 +1056,8 @@ def evaluate_challenges(
     started = time.perf_counter()
     items = []
     provider_error = re.compile(
-        r"gemini|gemini|billing|rate.?limit|timed?\s*out|network|connection failed|authentication|api.?key", re.I
+        r"gemini|gemini|billing|rate.?limit|timed?\s*out|network|connection failed|authentication|api.?key",
+        re.I,
     )
     for case in cases:
         item = {key: case[key] for key in ("id", "category", "question", "assumptions")}
@@ -970,6 +1084,8 @@ def evaluate_challenges(
                 sql=answer.sql,
                 parameters=answer.parameters,
                 intent=answer.intent,
+                execution_status=getattr(answer, "status", None),
+                next_step=getattr(answer, "next_step", ""),
                 tool=answer.tool,
                 error=answer.error,
                 message=answer.message,
@@ -989,7 +1105,9 @@ def evaluate_challenges(
                     if status == "inconclusive"
                     else "Agent query or calculation failed.",
                 )
-            elif answer.intent in {"out_of_scope", "clarification_needed"}:
+            elif answer.intent in {"out_of_scope", "clarification_needed"} or getattr(
+                answer, "status", None
+            ) in {"unsupported_analysis", "out_of_domain", "needs_clarification", "missing_data"}:
                 unsupported = re.search(
                     r"not supported|unsupported|cannot support|does not support",
                     answer.message,
@@ -997,7 +1115,9 @@ def evaluate_challenges(
                 )
                 item.update(
                     status="unsupported"
-                    if unsupported or answer.intent == "out_of_scope"
+                    if unsupported
+                    or answer.intent == "out_of_scope"
+                    or getattr(answer, "status", None) in {"unsupported_analysis", "out_of_domain"}
                     else "inconclusive",
                     reason="Agent reported this legitimate compound analysis unsupported."
                     if unsupported or answer.intent == "out_of_scope"
@@ -1021,7 +1141,9 @@ def evaluate_challenges(
     counts = {status: sum(item["status"] == status for item in items) for status in STATUSES}
     result = {
         "suite": "advanced challenges; not official ground truth",
-        "mode": f"live {getattr(agent.settings, 'provider', 'gemini').title()} agent" if live else "offline test (mocked)",
+        "mode": f"live {getattr(agent.settings, 'provider', 'gemini').title()} agent"
+        if live
+        else "offline test (mocked)",
         "timestamp_utc": datetime.now(UTC).isoformat(),
         "model": agent.settings.model,
         "total": len(cases),

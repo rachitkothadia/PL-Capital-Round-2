@@ -13,6 +13,7 @@ from pl_capital.errors import CapitalError, DataError, EntityError, PlanningErro
 from pl_capital.exposure import calculate, resolve_portfolio
 from pl_capital.gemini_client import GeminiPlanner
 from pl_capital.graph import GraphContext
+from pl_capital.metric_validation import verify_advanced_metrics
 from pl_capital.models import Answer, TraceEvent
 from pl_capital.redaction import clean_text
 from pl_capital.scenario import calculate_scenario
@@ -285,6 +286,15 @@ class PortfolioAgent:
                             event(
                                 "metric_verification",
                                 "Sector market values, all-holding denominator, percentage units and portfolio membership independently checked.",
+                            )
+                        metric_checks = verify_advanced_metrics(
+                            self.settings.db_path, question, result.model_dump(mode="json")
+                        )
+                        if metric_checks:
+                            event(
+                                "metric_verification",
+                                "Independent raw-source financial checks passed.",
+                                {"checks": metric_checks},
                             )
                         answer.result = result.model_dump(mode="json")
                         answer.status = "success" if result.rows else "empty_result"

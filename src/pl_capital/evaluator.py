@@ -255,6 +255,8 @@ def evaluate(
                 sql=answer.sql,
                 parameters=answer.parameters,
                 intent=answer.intent,
+                execution_status=getattr(answer, "status", None),
+                next_step=getattr(answer, "next_step", ""),
                 tool=answer.tool,
                 error=answer.error,
                 warnings=answer.warnings,
