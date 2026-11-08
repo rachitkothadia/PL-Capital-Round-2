@@ -4,7 +4,7 @@ import re
 import subprocess
 
 PATTERN = re.compile(
-    rb"(?:gsk_[A-Za-z0-9]{25,}|gh[pousr]_[A-Za-z0-9_]{25,}|sk-proj-[A-Za-z0-9_-]{25,}|-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----)"
+    rb"(?:gsk_[A-Za-z0-9]{25,}|AIza[A-Za-z0-9_-]{25,}|AQ\.[A-Za-z0-9_-]{25,}|gh[pousr]_[A-Za-z0-9_]{25,}|sk-proj-[A-Za-z0-9_-]{25,}|-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----)"
 )
 
 

@@ -3,12 +3,14 @@
 import re
 from typing import Any
 
-TOKEN = re.compile(r"(?:gsk_|gh[pousr]_|sk-proj-)[A-Za-z0-9_-]{12,}")
+TOKEN = re.compile(r"(?:gsk_|gh[pousr]_|sk-proj-|AIza|AQ\.)[A-Za-z0-9_-]{12,}")
 CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
 PRIVATE_FIELDS = frozenset(
     {
         "api_key",
         "groq_api_key",
+        "gemini_api_key",
+        "google_api_key",
         "authorization",
         "password",
         "access_token",

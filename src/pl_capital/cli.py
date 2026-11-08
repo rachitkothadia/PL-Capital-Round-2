@@ -24,9 +24,9 @@ from pl_capital.graph import GraphContext
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Auditable portfolio analytics over a historical snapshot.")
     parser.add_argument("--version", action="version", version=f"pl-capital {__version__}")
-    parser.add_argument("--model", choices=MODELS, dest="root_model", help="Groq planner model")
+    parser.add_argument("--model", choices=MODELS, dest="root_model", help="Planner model (selects Groq or Gemini)")
     commands = parser.add_subparsers(dest="command")
-    ask = commands.add_parser("ask", help="Ask the real Groq-backed portfolio agent")
+    ask = commands.add_parser("ask", help="Ask the real model-backed portfolio agent")
     ask.add_argument("question")
     ask.add_argument("--json", action="store_true", help="Return the typed answer as JSON")
     ask.add_argument("--trace", action="store_true", help="Show actual operational events")
@@ -41,7 +41,7 @@ def _parser() -> argparse.ArgumentParser:
     graph.add_argument("action", nargs="?", choices=["status"], default="status")
     graph.add_argument("--json", action="store_true")
     evaluation = commands.add_parser("eval", help="Evaluate all supplied questions through the real agent")
-    evaluation.add_argument("--live", action="store_true", help="Explicitly permit real Groq requests")
+    evaluation.add_argument("--live", action="store_true", help="Explicitly permit real provider requests")
     evaluation.add_argument("--report", type=Path, help="Write an auditable JSON evaluation report")
     evaluation.add_argument("--json", action="store_true")
     evaluation.add_argument("--model", choices=MODELS)
@@ -61,7 +61,7 @@ def _text(value: object, secret: str = "") -> str:
     value = str(value)
     if secret:
         value = value.replace(secret, "[REDACTED]")
-    value = re.sub(r"(?:gsk_|gh[pousr]_|sk-proj-)[A-Za-z0-9_-]{20,}", "[REDACTED]", value)
+    value = re.sub(r"(?:gsk_|gh[pousr]_|sk-proj-|AIza|AQ\.)[A-Za-z0-9_-]{20,}", "[REDACTED]", value)
     return re.sub(r"[\x00-\x08\x0b-\x1f\x7f]", "", value)
 
 
@@ -102,7 +102,7 @@ def _graph_status(settings: Settings) -> dict:
 def _doctor(settings: Settings) -> dict:
     initialize(settings.data_root, settings.db_path)
     versions = {}
-    for package in ("groq", "textual", "sqlglot", "pydantic", "falkordblite"):
+    for package in ("groq", "httpx", "textual", "sqlglot", "pydantic", "falkordblite"):
         try:
             versions[package] = importlib.metadata.version(package)
         except importlib.metadata.PackageNotFoundError:
@@ -110,11 +110,14 @@ def _doctor(settings: Settings) -> dict:
     return {
         "application": __version__, "python": platform.python_version(),
         "platform": platform.system(), "architecture": platform.machine(),
-        "groq_api_key": "SET" if settings.api_key else "NOT SET",
-        "groq_model": settings.model, "ready_for_live_agent": bool(settings.api_key),
+        "provider": settings.provider, "model": settings.model,
+        "api_key": "SET" if settings.api_key else "NOT SET",
+        "groq_api_key": ("SET" if settings.api_key else "NOT SET") if settings.provider == "groq" else "NOT ACTIVE",
+        "gemini_api_key": ("SET" if settings.api_key else "NOT SET") if settings.provider == "gemini" else "NOT ACTIVE",
+        "groq_model": settings.model if settings.provider == "groq" else None, "ready_for_live_agent": bool(settings.api_key),
         "dependencies": versions, "dataset": diagnostics(settings.db_path),
         "graph": _graph_status(settings),
-        "notes": ["No API request is made by doctor.", "SQLite is authoritative; optional graph failure does not block analytics."],
+        "notes": ["No API request is made by doctor; readiness indicates configuration only, not live quota or billing availability.", "SQLite is authoritative; optional graph failure does not block analytics."],
     }
 
 
@@ -166,7 +169,7 @@ def main(argv: list[str] | None = None) -> int:
     settings, agent = None, None
     try:
         if args.command == "eval" and not args.live:
-            return _error(console, "Use eval --live to run the supplied questions through the real Groq agent.", as_json=as_json)
+            return _error(console, "Use eval --live to run the supplied questions through the real model-backed agent.", as_json=as_json)
         if args.command is None and not sys.stdin.isatty():
             return _error(console, "The TUI requires an interactive terminal. Run uv run pl-capital ask \"your question\" or uv run pl-capital --help.", as_json=False)
         settings = Settings.from_env(model=getattr(args, "model", None) or args.root_model)

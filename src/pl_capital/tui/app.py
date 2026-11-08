@@ -26,7 +26,8 @@ Ask descriptive questions about the supplied historical portfolio snapshot.
 `/new` — start a fresh session and reset follow-up context  
 `/clear` — clear current conversation and context  
 `/sessions` — list this run's sessions  
-`/model [model ID]` — inspect or switch the real Groq planner  
+`/model [model ID]` — inspect or switch the active model planner
+
 `/graph` — inspect actual graph backend and fallback reason  
 `/trace` — expand or collapse recorded execution events  
 `/eval` — run all supplied questions through the live agent  
@@ -75,7 +76,7 @@ class CapitalApp(App):
         with Horizontal(id="workspace"):
             with Vertical(id="sidebar"):
                 yield Static("WORKSPACE", classes="section-title")
-                yield Static("Historical snapshot\nSQLite authoritative\nGroq interpretation", markup=False)
+                yield Static("Historical snapshot\nSQLite authoritative\nModel interpretation", markup=False)
                 yield Static("TOOLS", classes="section-title")
                 yield Static("SQL query\nSector exposure\nGround truth evaluator", markup=False)
                 yield Static("SESSIONS", classes="section-title")
@@ -128,7 +129,7 @@ class CapitalApp(App):
         yield SystemCommand("Graph backend status", "Inspect graph usage or SQLite fallback", self.action_graph)
         yield SystemCommand("Clear portfolio conversation", "Remove current messages and context", self.action_clear)
         yield SystemCommand("Toggle execution traces", "Expand or collapse actual operational events", self.action_toggle_trace)
-        yield SystemCommand("Run live ground truth evaluation", "Call Groq for all supplied questions", self.action_evaluate)
+        yield SystemCommand("Run live ground truth evaluation", "Call the active provider for all supplied questions", self.action_evaluate)
         yield SystemCommand("Choose portfolio theme", "Switch between readable dark and light palettes", self.action_choose_theme)
         yield SystemCommand("Portfolio theme: dark", "Apply the restrained dark palette", self.action_theme_dark)
         yield SystemCommand("Portfolio theme: light", "Apply the bright light palette", self.action_theme_light)
@@ -204,11 +205,11 @@ class CapitalApp(App):
             await self._notice("## Sessions this run\n\n" + "\n\n".join(self.sessions) + "\n\nOnly the current session's follow-up context is active.")
         elif command == "/model":
             if not argument.strip():
-                await self._notice("Current Groq model: `" + self.agent.settings.model + "`\n\nAvailable: " + ", ".join(f"`{m}`" for m in MODELS))
+                await self._notice("Current model: `" + self.agent.settings.model + "`\n\nAvailable: " + ", ".join(f"`{m}`" for m in MODELS))
             elif argument.strip() in MODELS:
                 self.agent.set_model(argument.strip())
                 self.query_one("#model-status", Static).update(self.agent.settings.model)
-                await self._notice("Groq planner switched to `" + self.agent.settings.model + "`.")
+                await self._notice("Planner switched to `" + self.agent.settings.model + "`.")
             else:
                 await self._notice("Choose one of the documented GPT-OSS model IDs with /model.")
         elif command == "/graph":
@@ -322,7 +323,7 @@ class CapitalApp(App):
             return
         self.busy = True
         self.query_one("#loading").display = True
-        self.query_one("#status", Static).update("LIVE EVALUATION  ·  Running the supplied questions through Groq")
+        self.query_one("#status", Static).update("LIVE EVALUATION  ·  Running the supplied questions through the active provider")
         self.run_worker(self._evaluate(), name="live-evaluation", group="analysis")
 
     async def _evaluate(self) -> None:
@@ -341,7 +342,7 @@ class CapitalApp(App):
         except CapitalError as exc:
             await self._notice("Live evaluation could not complete: " + plain(exc))
         except Exception:
-            await self._notice("Live evaluation could not complete. Check Groq configuration with pl-capital doctor and retry.")
+            await self._notice("Live evaluation could not complete. Check provider configuration with pl-capital doctor and retry.")
         finally:
             self.busy = False
             self.query_one("#loading").display = False

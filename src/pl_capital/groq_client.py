@@ -3,7 +3,7 @@ import json
 import groq
 from pydantic import ValidationError
 
-from pl_capital.config import MODELS, Settings
+from pl_capital.config import GROQ_MODELS, Settings
 from pl_capital.errors import PlanningError
 from pl_capital.models import Plan
 from pl_capital.prompts import SYSTEM_PROMPT
@@ -79,7 +79,7 @@ class GroqPlanner:
             ) from exc
 
     def set_model(self, model: str):
-        if model not in MODELS:
+        if model not in GROQ_MODELS:
             raise PlanningError("Unsupported model. Choose a documented Groq GPT-OSS model.")
         self.model = model
 

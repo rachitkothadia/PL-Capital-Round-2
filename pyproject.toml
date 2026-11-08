@@ -5,10 +5,10 @@ build-backend = "hatchling.build"
 [project]
 name = "pl-capital"
 version = "1.0.0"
-description = "Auditable local portfolio analytics powered by Groq and SQLite"
+description = "Auditable local portfolio analytics powered by Gemini, Groq and SQLite"
 requires-python = ">=3.12,<3.15"
 dependencies = [
-  "groq>=0.32,<1", "textual>=6,<8", "rich>=14,<15",
+  "groq>=0.32,<1", "httpx>=0.28,<1", "textual>=6,<8", "rich>=14,<15",
   "sqlglot>=28,<29", "pydantic>=2.12,<3", "python-dotenv>=1.2,<2",
   "platformdirs>=4.5,<5", "filelock>=4.2.1,<5",
 ]

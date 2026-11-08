@@ -124,3 +124,13 @@ def test_export_does_not_follow_symlink_outside_cache(settings, tmp_path):
     with pytest.raises(CapitalError):
         ExportService(settings).export_answer(executed_answer())
     assert list(outside.iterdir()) == []
+
+
+def test_google_key_formats_are_redacted_from_diagnostics():
+    from pl_capital.redaction import clean_text, redact
+
+    for token in ("AQ." + "Z" * 44, "AIza" + "Z" * 35):
+        assert token not in clean_text("Failure " + token)
+        assert token not in str(
+            redact({"gemini_api_key": token, "google_api_key": token, "detail": token})
+        )

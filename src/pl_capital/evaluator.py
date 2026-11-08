@@ -203,7 +203,7 @@ def _scrub(value: Any, secret: str) -> Any:
         return [_scrub(item, secret) for item in value]
     if isinstance(value, str):
         value = value.replace(secret, "[REDACTED]") if secret else value
-        return re.sub(r"(?:gsk_|gh[pousr]_)[A-Za-z0-9_]{20,}", "[REDACTED]", value)
+        return re.sub(r"(?:gsk_|gh[pousr]_|AIza|AQ\.)[A-Za-z0-9_]{20,}", "[REDACTED]", value)
     if isinstance(value, float) and not math.isfinite(value):
         return "[NONFINITE]"
     return value
@@ -230,7 +230,7 @@ def evaluate(
     """Run every supplied question through the agent; mocks require explicit offline mode."""
     if live and (getattr(agent, "live", False) is not True or not agent.settings.api_key):
         raise ConfigurationError(
-            "Live evaluation requires a real Groq agent and configured API key."
+            f"Live evaluation requires a real {getattr(agent.settings, 'provider', 'groq').title()} agent and configured API key."
         )
     root = Path(root or agent.settings.data_root)
     try:
@@ -321,7 +321,7 @@ def evaluate(
             }
     passed = sum(item["passed"] for item in items)
     result = {
-        "mode": "live Groq agent" if live else "offline test (mocked)",
+        "mode": f"live {getattr(agent.settings, 'provider', 'groq').title()} agent" if live else "offline test (mocked)",
         "timestamp_utc": datetime.now(UTC).isoformat(),
         "model": getattr(agent.settings, "model", None),
         "passed": passed,

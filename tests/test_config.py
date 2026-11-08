@@ -28,3 +28,25 @@ def test_invalid_config(tmp_path, monkeypatch, key, value):
     monkeypatch.setenv(key, value)
     with pytest.raises(ConfigurationError):
         Settings.from_env()
+
+
+def test_gemini_selection_uses_its_own_key(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("LLM_PROVIDER", "gemini")
+    monkeypatch.setenv("GEMINI_MODEL", "gemini-2.5-pro")
+    monkeypatch.setenv("GEMINI_API_KEY", "gemini-test-value")
+    monkeypatch.setenv("GROQ_API_KEY", "groq-test-value")
+    value = Settings.from_env()
+    assert value.provider == "gemini"
+    assert value.api_key == "gemini-test-value"
+    alternate = Settings.from_env(model="openai/gpt-oss-120b")
+    assert alternate.provider == "groq"
+    assert alternate.api_key == "groq-test-value"
+
+
+def test_provider_default_cannot_silently_select_another_provider(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("LLM_PROVIDER", "gemini")
+    monkeypatch.setenv("GEMINI_MODEL", "openai/gpt-oss-120b")
+    with pytest.raises(ConfigurationError):
+        Settings.from_env()

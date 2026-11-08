@@ -18,3 +18,9 @@ def settings(tmp_path):
 @pytest.fixture
 def db_path(settings):
     return settings.db_path
+
+
+@pytest.fixture(autouse=True)
+def isolate_local_provider_preference(monkeypatch):
+    """A developer's local active provider must not alter offline test defaults."""
+    monkeypatch.setenv("LLM_PROVIDER", "groq")

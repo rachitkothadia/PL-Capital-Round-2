@@ -8,16 +8,16 @@ The [original assignment](docs/assignment-original/README.md) asks for four comp
 
 | Component | Implementation |
 | --- | --- |
-| SQL Query Tool | Groq generates SQLite SELECT queries; AST validation, bindings and a read-only connection enforce the execution boundary. |
+| SQL Query Tool | The selected model provider generates SQLite SELECT queries; AST validation, bindings and a read-only connection enforce the execution boundary. |
 | Exposure Calculator | Decimal arithmetic groups recorded stock weights by sector, excludes bonds, and returns whole-portfolio and equity-normalized percentages. |
-| Portfolio Agent | A shared Groq-backed agent selects tools, resolves entities, handles follow-ups and records operational evidence. |
+| Portfolio Agent | A shared provider-backed agent selects tools, resolves entities, handles follow-ups and records operational evidence. |
 | Ground Truth Evaluator | Runs the ten supplied questions through the real agent, then checks results against independent references. |
 
-I added a Textual terminal interface and optional local FalkorDBLite relationship context. SQLite remains the numerical source of truth. The production planner never loads evaluation answers or reference SQL.
+Gemini support was added later at the repository owner's request; the original Groq assessment path remains available. I added a Textual terminal interface and optional local FalkorDBLite relationship context. SQLite remains the numerical source of truth. The production planner never loads evaluation answers or reference SQL.
 
 ## Quick start
 
-Prerequisites: Git, Python 3.12–3.14, [uv](https://docs.astral.sh/uv/getting-started/installation/), access to this private repository and a Groq API key. `.python-version` selects Python 3.13; uv can provision it.
+Prerequisites: Git, Python 3.12–3.14, [uv](https://docs.astral.sh/uv/getting-started/installation/), access to this private repository and a Gemini or Groq API key. `.python-version` selects Python 3.13; uv can provision it.
 
 macOS / Linux:
 
@@ -26,7 +26,7 @@ git clone https://github.com/rachitkothadia/PL-Capital-Round-2.git
 cd PL-Capital-Round-2
 cp .env.example .env
 chmod 600 .env
-# Edit .env privately and set GROQ_API_KEY.
+# Edit .env privately and set GEMINI_API_KEY (or configure Groq).
 uv sync --locked
 uv run pl-capital doctor
 uv run pl-capital
@@ -44,7 +44,7 @@ uv run pl-capital doctor
 uv run pl-capital
 ```
 
-After setup, launch from the repository with **`uv run pl-capital`**. The first run imports the supplied schema and nine CSVs into the user cache. No Docker or hosted database is required. Set `GROQ_API_KEY` in the environment or ignored `.env`; environment values take precedence. Default model: `openai/gpt-oss-120b`, hosted by **Groq**. `openai/gpt-oss-20b` is also supported. No OpenAI API integration is used.
+After setup, launch from the repository with **`uv run pl-capital`**. The first run imports the supplied schema and nine CSVs into the user cache. No Docker or hosted database is required. The current template selects **Gemini 2.5 Pro** through `LLM_PROVIDER=gemini`, `GEMINI_MODEL=gemini-2.5-pro`, and `GEMINI_API_KEY`. `gemini-2.5-flash` and `gemini-2.5-flash-lite` are also available. Groq remains selectable through `LLM_PROVIDER=groq`, `GROQ_MODEL`, and `GROQ_API_KEY`, or `--model openai/gpt-oss-120b` / `openai/gpt-oss-20b`. Environment values take precedence over `.env`; installations without `LLM_PROVIDER` retain the original Groq default. No OpenAI API integration is used. Keys belong only in private environment configuration.
 
 ## Using the terminal
 
@@ -83,7 +83,7 @@ uv run pl-capital challenges --live --ids 1,5,12 --report reports/advanced.json
 
 ## Architecture, safety and assumptions
 
-The TUI, CLI and evaluators call the same `PortfolioAgent`. SQLite metadata and optional graph context inform a strict typed Groq plan. SQL passes a single-statement/schema/function/binding allowlist, then executes through URI `mode=ro`, `query_only`, an authorizer, disabled extension loading where supported, and time/step/row/size bounds. One SQL correction is permitted. The exposure path uses deterministic Decimal calculations. Provider failure returns an error, never a canned answer. Only bounded question/schema/entity context goes to Groq.
+The TUI, CLI and evaluators call the same `PortfolioAgent`. SQLite metadata and optional graph context inform a strict typed provider plan. SQL passes a single-statement/schema/function/binding allowlist, then executes through URI `mode=ro`, `query_only`, an authorizer, disabled extension loading where supported, and time/step/row/size bounds. One SQL correction is permitted. The exposure path uses deterministic Decimal calculations. Provider failure returns an error, never a canned answer. Only bounded question/schema/entity context goes to the explicitly selected provider. Gemini uses the native Google API with JSON Schema; there is no silent cross-provider fallback.
 
 This is a historical 2023 snapshot, with 13 portfolios, 30 securities, 95 holdings and incomplete risk/performance coverage. No live prices are fetched. These measures are distinct:
 
@@ -115,13 +115,13 @@ uv run --extra graph pytest tests/test_graph.py tests/test_graph_relevance.py -q
 uv build
 ```
 
-The refinement baseline passed **160 offline tests** and the live official evaluator scored **10/10**. Final refinement verification: **264 offline tests passed** and the official evaluator scored **10/10 on Groq 20B**. The post-fix advanced run yielded **4 strict passes, 6 failures and 10 inconclusive cases** after saved-answer comparison fixes. A final 120B attempt was quota-limited (4/10); this is retained separately. Full model-specific evidence is in the [refinement report](docs/refinement-report.md). The [twenty challenge questions](docs/advanced-test-questions.md) retain the supplied wording. All twenty SQL references agree with independent Python calculations; that is reference validation, not AI accuracy. Strict challenge scoring distinguishes pass, fail, unsupported, inconclusive and not run. Mocked tests are explicitly offline.
+The refinement baseline passed **160 offline tests** and the live official evaluator scored **10/10**. Final refinement verification: **264 offline tests passed** and the official evaluator scored **10/10 on Groq 20B**. The post-fix advanced run yielded **4 strict passes, 6 failures and 10 inconclusive cases** after saved-answer comparison fixes. A final 120B attempt was quota-limited (4/10); this is retained separately. Full Groq evidence is in the [refinement report](docs/refinement-report.md). The later [Gemini integration report](docs/gemini-integration.md) records the provider switch, offline results and billing-blocked live attempts; no Gemini accuracy claim is made. The [twenty challenge questions](docs/advanced-test-questions.md) retain the supplied wording. All twenty SQL references agree with independent Python calculations; that is reference validation, not AI accuracy. Strict challenge scoring distinguishes pass, fail, unsupported, inconclusive and not run. Mocked tests are explicitly offline.
 
 Tests cover all four assignment components, malicious SQL, bad data, missing/ambiguous entities, zero denominators, provider/graph outages, independent challenge calculations, result ranking/duplicates, themes, resizing, keyboard navigation, clipboard feedback and export safety. CI runs the core on macOS/Linux/Windows and Python 3.12/3.13, plus Linux 3.14 and a native graph job.
 
 ## Trade-offs and repository layout
 
-Groq output can vary despite temperature zero; strict advanced queries can still omit requested fields, choose incorrect ordering or require manual result review. Provider quotas affect live evaluation; incomplete runs never count as passing. Native clipboard behaviour depends on the host; Linux/Windows clipboard integration needs local smoke testing. Graph dependency/platform failures retain SQLite analytics. Session persistence, live pricing, trading and personal recommendations are outside scope.
+Groq output can vary despite temperature zero; strict advanced queries can still omit requested fields, choose incorrect ordering or require manual result review. Provider quotas, billing and permissions affect live evaluation; incomplete runs never count as passing. Native clipboard behaviour depends on the host; Linux/Windows clipboard integration needs local smoke testing. Graph dependency/platform failures retain SQLite analytics. Session persistence, live pricing, trading and personal recommendations are outside scope.
 
 `src/pl_capital/` contains the agent, query boundary, calculator, evaluators and TUI. `tests/` contains regressions and the challenge catalog. `data/` preserves the nine CSVs; `docs/assignment-original/` preserves the assignment. The wheel includes data, schema, official references, the advanced catalog and styles, and runs outside the checkout. Build artifacts are local; nothing is published to a package registry.
 

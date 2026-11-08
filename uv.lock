@@ -302,6 +302,7 @@ source = { editable = "." }
 dependencies = [
     { name = "filelock" },
     { name = "groq" },
+    { name = "httpx" },
     { name = "platformdirs" },
     { name = "pydantic" },
     { name = "python-dotenv" },
@@ -328,6 +329,7 @@ requires-dist = [
     { name = "falkordblite", marker = "sys_platform != 'win32' and extra == 'graph'", specifier = ">=0.9,<1" },
     { name = "filelock", specifier = ">=4.2.1,<5" },
     { name = "groq", specifier = ">=0.32,<1" },
+    { name = "httpx", specifier = ">=0.28,<1" },
     { name = "platformdirs", specifier = ">=4.5,<5" },
     { name = "pydantic", specifier = ">=2.12,<3" },
     { name = "python-dotenv", specifier = ">=1.2,<2" },

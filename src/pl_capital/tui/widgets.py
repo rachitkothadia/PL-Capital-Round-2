@@ -21,7 +21,7 @@ from pl_capital.models import Answer
 def plain(value: object, limit: int = 2000) -> str:
     """Treat dataset/model strings as text, including terminal control sequences."""
     text = re.sub(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]", "", str(value))
-    return re.sub(r"(?:gsk_|gh[pousr]_|sk-proj-)[A-Za-z0-9_-]{20,}", "[credential redacted]", text)[:limit]
+    return re.sub(r"(?:gsk_|gh[pousr]_|sk-proj-|AIza|AQ\.)[A-Za-z0-9_-]{20,}", "[credential redacted]", text)[:limit]
 
 
 def safe_json(value: object) -> str:
