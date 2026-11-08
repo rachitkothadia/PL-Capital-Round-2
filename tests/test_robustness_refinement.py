@@ -170,7 +170,13 @@ def test_missing_graph_still_runs_authoritative_sql(settings, monkeypatch):
         answer = agent.answer_question("Count portfolios with Technology sector stock holdings")
         assert answer.error is None and answer.result["rows"] == [[8]]
         assert agent.graph.status()["backend"] == "sqlite"
-        assert any("SQLite" in warning or "sqlite" in warning for warning in answer.warnings)
+        retrieval = next(event.data for event in answer.trace if event.stage == "retrieval")
+        assert retrieval["used"] is False
+        # Windows deliberately skips the unsupported native backend rather than
+        # attempting the injected import failure. Provenance still names SQLite.
+        assert "sqlite" in retrieval["reason"].casefold() or any(
+            "sqlite" in warning.casefold() for warning in answer.warnings
+        )
         assert not any(
             event.stage == "retrieval" and event.data.get("used") for event in answer.trace
         )
