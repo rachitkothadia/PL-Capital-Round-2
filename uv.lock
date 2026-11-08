@@ -274,6 +274,7 @@ name = "pl-capital"
 version = "1.0.0"
 source = { editable = "." }
 dependencies = [
+    { name = "falkordblite", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "filelock" },
     { name = "httpx" },
     { name = "platformdirs" },
@@ -286,7 +287,7 @@ dependencies = [
 
 [package.optional-dependencies]
 graph = [
-    { name = "falkordblite", marker = "sys_platform != 'win32'" },
+    { name = "falkordblite", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
 ]
 
 [package.dev-dependencies]
@@ -299,7 +300,8 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "falkordblite", marker = "sys_platform != 'win32' and extra == 'graph'", specifier = ">=0.9,<1" },
+    { name = "falkordblite", marker = "sys_platform == 'darwin' or sys_platform == 'linux'", specifier = ">=0.11,<1" },
+    { name = "falkordblite", marker = "(sys_platform == 'darwin' and extra == 'graph') or (sys_platform == 'linux' and extra == 'graph')", specifier = ">=0.11,<1" },
     { name = "filelock", specifier = ">=4.2.1,<5" },
     { name = "httpx", specifier = ">=0.28,<1" },
     { name = "platformdirs", specifier = ">=4.5,<5" },

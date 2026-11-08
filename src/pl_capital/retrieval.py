@@ -21,7 +21,7 @@ STOPWORDS = frozenset(
     "for from to of in on at by as it its do does did we you i my your our us have has "
     "with without total each show me find and or all that this these those about please "
     "fund funds portfolio portfolios sector sectors holdings securities calculate breakdown "
-    "exposures exposure different current name names id date dates number count".split()
+    "exposures exposure different current name names id date dates number count maybe maby".split()
 )
 GENERIC_NAMES = frozenset({"fund", "portfolio", "inc", "corporation", "corp", "the"})
 TABLE_HINTS = {
@@ -298,6 +298,7 @@ def retrieve(context: "GraphContext", question: str) -> dict:
                         "Graph retrieved no useful entity or join context; used SQLite schema fallback.",
                     )
             except Exception as exc:
+                context._error_type = type(exc).__name__
                 reason = (
                     "Graph retrieval time budget exhausted"
                     if isinstance(exc, TimeoutError)
@@ -317,7 +318,23 @@ def retrieve(context: "GraphContext", question: str) -> dict:
         retrieval_ms=round((perf_counter() - started) * 1000, 3),
         terms=request["terms"],
         normalizations=request["normalizations"],
+        graph_backend=result["backend"],
+        graph_used=result["used"],
+        snapshot_id=context.status().get("snapshot_id") if result["used"] else None,
+        fallback_reason=None if result["used"] else result["reason"],
+        relationship_paths=[
+            f"{j['source']}.{j['column']} -> {j['target']}.{j['target_column']}"
+            for j in result["joins"]
+        ]
+        if result["used"]
+        else [],
     )
+    if result["used"] and any(e["type"] == "holding" for e in result["entities"]):
+        result["relationship_paths"].insert(
+            0, "Portfolio-HAS_HOLDING-Holding-OF_SECURITY-Security-IN_SECTOR-Sector"
+        )
+    elif result["used"] and any(e["type"] in {"sector", "security"} for e in result["entities"]):
+        result["relationship_paths"].insert(0, "Security-IN_SECTOR-Sector")
     while len(json.dumps(result, ensure_ascii=False)) >= MAX_CONTEXT_CHARS and result["entities"]:
         result["entities"].pop()
     return result
@@ -356,10 +373,11 @@ def _native(context, request, full_schema, queries, parameters, deadline):
     securities = [e for e in entities if e["type"] == "security"]
     if portfolios:
         rows = run(
-            "MATCH (p:Portfolio)-[:HOLDS]->(s:Security)-[:IN_SECTOR]->(sec:Sector) "
-            "WHERE p.id IN $ids RETURN p.name,s.symbol,s.asset_type,sec.name ORDER BY p.name,s.symbol LIMIT 32",
+            "MATCH (p:Portfolio)-[:HAS_HOLDING]->(h:Holding)-[:OF_SECURITY]->(s:Security) "
+            "WHERE p.id IN $ids OPTIONAL MATCH (s)-[:IN_SECTOR]->(sec:Sector) "
+            "RETURN p.name,h.id,s.id,s.symbol,s.asset_type,sec.name ORDER BY p.name,s.symbol LIMIT 32",
             {"ids": [p["id"] for p in portfolios]},
-            ("portfolio", "symbol", "asset_type", "sector"),
+            ("portfolio", "holding_id", "security_id", "symbol", "asset_type", "sector"),
         )
         entities.extend(dict(type="holding", **row) for row in rows)
     if sectors or securities:
