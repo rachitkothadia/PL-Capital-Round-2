@@ -31,16 +31,22 @@ class TraceEvent(BaseModel):
 
 
 class Answer(BaseModel):
+    question: str = ""
     intent: Intent = "clarification_needed"
     tool: str | None = None
     message: str = ""
     result: dict[str, Any] = Field(default_factory=dict)
     sql: str | None = None
+    executed_sql: str | None = None
     parameters: dict[str, Any] = Field(default_factory=dict)
+    executed_parameters: dict[str, Any] = Field(default_factory=dict)
     trace: list[TraceEvent] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     error: str | None = None
     elapsed_ms: float = 0
+    assumptions: list[str] = Field(default_factory=list)
+    source_dates: dict[str, list[str | None]] = Field(default_factory=dict)
+    currency: str | None = None
 
 
 class QueryResult(BaseModel):

@@ -9,13 +9,8 @@ from pl_capital.database import readonly
 from pl_capital.errors import QueryError
 
 
-def verify_market_values(path, question: str, sector_names: list[str], result: dict) -> bool:
-    """Validate a clearly requested named-sector portfolio value/percentage breakdown.
-
-    This generalizes to any sector actually present in the data. It reads no
-    assessment question IDs/references and never supplies SQL or answers. A
-    failed model query must be regenerated through the bounded correction path.
-    """
+def market_value_sector(question: str, sector_names: list[str]) -> str | None:
+    """Recognize only the existing narrow, unfiltered market-value contract."""
     text = question.casefold()
     # Apply only to the unfiltered cross-portfolio metric whose full population
     # is unambiguous. Named funds, top-N and other denominators retain SQL's
@@ -23,12 +18,12 @@ def verify_market_values(path, question: str, sector_names: list[str], result: d
     if not re.search(
         r"(?:for\s+(?:each|every|all)\s+(?:portfolio|fund)|(?:per|by)\s+portfolio)", text
     ):
-        return False
+        return None
     if re.search(
         r"\b(?:top|bottom|active|inactive|risk|aum|where|only|except|excluding|greater|fewer|largest|smallest)\b|assets under management|current_weight|recorded weight",
         text,
     ):
-        return False
+        return None
     named = [name for name in sector_names if name.casefold() in text]
     if len(named) != 1 or not all(
         (
@@ -36,8 +31,22 @@ def verify_market_values(path, question: str, sector_names: list[str], result: d
             re.search(r"percent|\bshare\b|%", text),
         )
     ):
-        return False
+        return None
     sector = named[0]
+    return sector
+
+
+def verify_market_values(path, question: str, sector_names: list[str], result: dict) -> bool:
+    """Validate a clearly requested named-sector portfolio value/percentage breakdown.
+
+    This generalizes to any sector actually present in the data. It reads no
+    assessment question IDs/references and never supplies SQL or answers. A
+    failed model query must be regenerated through the bounded correction path.
+    """
+    sector = market_value_sector(question, sector_names)
+    if sector is None:
+        return False
+    text = question.casefold()
     totals, numerators = defaultdict(Decimal), defaultdict(Decimal)
     members = set()
     try:

@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from dotenv import load_dotenv
-from platformdirs import user_cache_path
+from platformdirs import user_cache_path, user_config_path
 
 from pl_capital.errors import ConfigurationError
 
@@ -18,6 +18,7 @@ class Settings:
     api_key: str = field(default="", repr=False)
     model: str = MODELS[0]
     graph_backend: str = "auto"
+    config_dir: Path | None = None
 
     @property
     def db_path(self) -> Path:
@@ -38,4 +39,7 @@ class Settings:
             raise ConfigurationError("Choose openai/gpt-oss-120b or openai/gpt-oss-20b.")
         if backend not in {"auto", "lite", "off"}:
             raise ConfigurationError("GRAPH_BACKEND must be auto, lite, or off.")
-        return cls(root, cache_dir, os.getenv("GROQ_API_KEY", ""), chosen, backend)
+        config_dir = Path(
+            os.getenv("PL_CAPITAL_CONFIG_DIR", user_config_path("pl-capital"))
+        ).expanduser()
+        return cls(root, cache_dir, os.getenv("GROQ_API_KEY", ""), chosen, backend, config_dir)

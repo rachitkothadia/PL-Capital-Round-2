@@ -12,9 +12,10 @@ from pl_capital.exposure import calculate, resolve_portfolio
 from pl_capital.graph import GraphContext
 from pl_capital.groq_client import GroqPlanner
 from pl_capital.models import Answer, TraceEvent
+from pl_capital.redaction import clean_text
 from pl_capital.sql_safety import validate, validate_audit_projection
 from pl_capital.sql_tool import execute
-from pl_capital.verification import verify_market_values
+from pl_capital.verification import market_value_sector, verify_market_values
 
 INJECTION = re.compile(
     r"ignore\s+(?:all\s+)?(?:previous|prior|system)|GROQ_API_KEY|gsk_[A-Za-z0-9]+|"
@@ -35,7 +36,7 @@ class PortfolioAgent:
     def __init__(self, settings: Settings, *, planner=None):
         self.settings = settings
         initialize(settings.data_root, settings.db_path)
-        self.graph = GraphContext(settings)
+        self.graph = GraphContext(settings, lazy=True)
         self._planner = planner
         self.live = planner is None
         self.previous_portfolio = None
@@ -66,6 +67,21 @@ class PortfolioAgent:
                 r[0] for r in conn.execute("SELECT DISTINCT target_risk_level FROM portfolios")
             ]
             statuses = [r[0] for r in conn.execute("SELECT DISTINCT status FROM portfolios")]
+            currencies = [
+                r[0]
+                for r in conn.execute(
+                    "SELECT DISTINCT currency FROM securities WHERE currency IS NOT NULL"
+                )
+            ]
+            source_dates = {}
+            for table, column in (
+                ("historical_prices", "price_date"),
+                ("portfolio_performance", "performance_date"),
+                ("risk_metrics", "calculation_date"),
+            ):
+                source_dates[table] = list(
+                    conn.execute(f"SELECT MIN({column}),MAX({column}) FROM {table}").fetchone()  # noqa: S608 -- fixed schema identifiers above
+                )
         return {
             "schema": schema_context(self.settings.db_path),
             "retrieval": retrieved,
@@ -74,6 +90,8 @@ class PortfolioAgent:
             "target_risk_levels": risks,
             "portfolio_statuses": statuses,
             "asset_types": ["Stock", "Bond"],
+            "currency": currencies[0] if len(currencies) == 1 else None,
+            "source_dates": source_dates,
             "limitations": [
                 "Historical snapshot prices",
                 "Incomplete performance/risk coverage",
@@ -83,7 +101,14 @@ class PortfolioAgent:
 
     def answer_question(self, question: str) -> Answer:
         start = time.perf_counter()
-        answer = Answer(warnings=["Historical snapshot analytics; prices are not live quotes."])
+        answer = Answer(
+            question=clean_text(question, self.settings.api_key)
+            if isinstance(question, str)
+            else "",
+            assumptions=[
+                "Supplied historical snapshot; security current_price is not a live quote."
+            ],
+        )
 
         def event(stage, detail, data=None):
             answer.trace.append(
@@ -112,6 +137,8 @@ class PortfolioAgent:
             initialize(self.settings.data_root, self.settings.db_path)
             context = self._context(question)
             retrieved = context["retrieval"]
+            answer.source_dates = context["source_dates"]
+            answer.currency = context["currency"]
             event(
                 "retrieval",
                 "Relationship graph context used."
@@ -119,7 +146,7 @@ class PortfolioAgent:
                 else "SQLite metadata fallback.",
                 retrieved,
             )
-            if not retrieved["used"]:
+            if not retrieved["used"] and retrieved.get("attempted"):
                 answer.warnings.append(retrieved.get("reason", "Graph unavailable; SQLite used."))
             if self._planner is None:
                 self._planner = GroqPlanner(self.settings)
@@ -173,19 +200,36 @@ class PortfolioAgent:
                         if len(params) != len(plan.parameters):
                             raise QueryError("Duplicate SQL parameter names are not permitted.")
                         answer.sql, answer.parameters = plan.sql, params
+                        # A SQL plan can compare several named funds; the optional
+                        # context label must not turn that set into a single entity.
+                        named_portfolios = [
+                            name for name in context["portfolio_names"]
+                            if plan.portfolio and name.casefold() in plan.portfolio.casefold()
+                        ]
+                        resolved_portfolio = (
+                            resolve_portfolio(self.settings.db_path, plan.portfolio)[1]
+                            if plan.portfolio and len(named_portfolios) < 2
+                            else None
+                        )
                         event(
                             "sql_generation",
                             "Model-generated SQL received as untrusted data.",
                             {"sql": plan.sql, "parameters": params},
                         )
                         sql, tables = validate(plan.sql, params, context["schema"])
-                        validate_audit_projection(sql, question=question)
+                        if market_value_sector(question, context["sector_names"]) is not None:
+                            validate_audit_projection(sql, question=question)
                         event(
                             "validation",
                             "Single SELECT, schema, functions and bindings validated.",
                             {"source_tables": tables},
                         )
                         result = execute(self.settings.db_path, sql, params)
+                        event(
+                            "execution",
+                            "Read-only SQLite query executed; acceptance checks follow.",
+                            {"sql": sql, "parameters": params, **result.model_dump(mode="json")},
+                        )
                         checked = verify_market_values(
                             self.settings.db_path,
                             question,
@@ -198,11 +242,16 @@ class PortfolioAgent:
                                 "Sector market values, all-holding denominator, percentage units and portfolio membership independently checked.",
                             )
                         answer.result = result.model_dump(mode="json")
-                        event(
-                            "execution",
-                            "Read-only SQLite execution completed within resource limits.",
-                            answer.result,
-                        )
+                        answer.sql = answer.executed_sql = sql
+                        answer.executed_parameters = dict(params)
+                        if "transactions" in result.source_tables:
+                            answer.assumptions.append(
+                                "Recorded transaction cash movement is not verified realized P&L; tax-lot accounting evidence is not supplied."
+                            )
+                        if "portfolio_performance" in result.source_tables:
+                            answer.assumptions.append(
+                                "Observed NAV change is not necessarily total investment return; missing observations are not filled."
+                            )
                         if result.truncated:
                             answer.warnings.append(
                                 "Result truncated at the configured row cap; narrow your query."
@@ -213,10 +262,8 @@ class PortfolioAgent:
                             answer.message = f"{result.columns[0]}: {result.rows[0][0] if result.rows[0][0] is not None else 'No data'}"
                         else:
                             answer.message = f"Found {result.row_count} matching record{'s' if result.row_count != 1 else ''} in the supplied snapshot."
-                        if plan.portfolio:
-                            _, self.previous_portfolio = resolve_portfolio(
-                                self.settings.db_path, plan.portfolio
-                            )
+                        if resolved_portfolio:
+                            self.previous_portfolio = resolved_portfolio
                         break
                     except QueryError as exc:
                         event(
