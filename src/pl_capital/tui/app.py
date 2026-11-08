@@ -6,7 +6,7 @@ from textual.app import App, ComposeResult, SystemCommand
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import Screen
-from textual.widgets import Collapsible, Footer, LoadingIndicator, Markdown, Static
+from textual.widgets import Collapsible, DataTable, Footer, LoadingIndicator, Markdown, Static
 
 from pl_capital.clipboard import ClipboardService
 from pl_capital.config import MODELS
@@ -32,12 +32,20 @@ Ask descriptive questions about the supplied historical portfolio snapshot.
 `/trace` — expand or collapse recorded execution events  
 `/eval` — run all supplied questions through the live agent  
 `/theme` — choose a theme; `/theme dark` or `/theme light` applies it  
-`/copy` or **F6** — copy the latest answer's exact executed SQL  
+`/copy` or **F6** — copy exact executed SQL, or the scenario calculation  
 `/export` or **F7** — export the latest answer as private JSON  
 `/debug` — explicitly toggle the latest answer's raw diagnostics  
 `/quit` or `:q` — exit
 
 **PageUp / PageDown** scroll the conversation. **F2** opens the theme chooser.
+
+SQL and scenario tables: **← / →** scroll columns, **↑ / ↓** select a record,
+**Enter** opens every field and scenario sector exposures. **Full Table** opens a
+larger view; **Esc** closes it. All returned rows remain available in the table and export.
+
+Extra capability: ask for a **hypothetical scenario** with named sector shocks,
+for example Technology down 22%, Energy up 11%, Financials down 7%, other equities
+and bonds unchanged. The deterministic calculator uses the supplied historical prices.
 
 No live prices or personal investment recommendations. Session history stays in memory and ends when the app closes.
 """
@@ -53,7 +61,7 @@ class CapitalApp(App):
         Binding("f1", "help", "Help"),
         Binding("ctrl+t", "toggle_trace", "Trace", priority=True),
         Binding("f2", "choose_theme", "Theme", priority=True),
-        Binding("f6", "copy_sql", "Copy SQL", priority=True),
+        Binding("f6", "copy_sql", "Copy", priority=True),
         Binding("f7", "export_answer", "Export", priority=True),
         Binding("pageup", "timeline_up", "Scroll up", priority=True, show=False),
         Binding("pagedown", "timeline_down", "Scroll down", priority=True, show=False),
@@ -78,7 +86,7 @@ class CapitalApp(App):
                 yield Static("WORKSPACE", classes="section-title")
                 yield Static("Historical snapshot\nSQLite authoritative\nModel interpretation", markup=False)
                 yield Static("TOOLS", classes="section-title")
-                yield Static("SQL query\nSector exposure\nGround truth evaluator", markup=False)
+                yield Static("SQL query\nSector exposure\nGround truth evaluator\nScenario analysis (extra)", markup=False)
                 yield Static("SESSIONS", classes="section-title")
                 yield Static("Session 1", id="session-list", markup=False)
                 yield Static("/help for commands", classes="muted", markup=False)
@@ -133,7 +141,7 @@ class CapitalApp(App):
         yield SystemCommand("Choose portfolio theme", "Switch between readable dark and light palettes", self.action_choose_theme)
         yield SystemCommand("Portfolio theme: dark", "Apply the restrained dark palette", self.action_theme_dark)
         yield SystemCommand("Portfolio theme: light", "Apply the bright light palette", self.action_theme_light)
-        yield SystemCommand("Copy latest executed SQL", "Copy validated SQL; show a manual fallback when unavailable", self.action_copy_sql)
+        yield SystemCommand("Copy latest calculation or SQL", "Copy scenario calculation or exact executed SQL", self.action_copy_sql)
         yield SystemCommand("Export latest answer", "Save safe JSON in the private application cache", self.action_export_answer)
 
     async def _append(self, widget) -> None:
@@ -176,8 +184,9 @@ class CapitalApp(App):
             answer = await asyncio.to_thread(self.agent.answer_question, question)
             self.turn_count += 1
             await self._append(AnswerCard(answer))
+            status = getattr(answer, "status", "tool_error" if answer.error else "success")
             self.query_one("#status", Static).update(
-                f"{'ACTION NEEDED' if answer.error else 'READY'}  ·  "
+                f"{status.replace('_', ' ').upper()}  ·  "
                 f"{answer.tool or answer.intent}  ·  {answer.elapsed_ms:.0f} ms"
             )
         except CapitalError as exc:
@@ -211,7 +220,7 @@ class CapitalApp(App):
                 self.query_one("#model-status", Static).update(self.agent.settings.model)
                 await self._notice("Planner switched to `" + self.agent.settings.model + "`.")
             else:
-                await self._notice("Choose one of the documented GPT-OSS model IDs with /model.")
+                await self._notice("Choose one of the documented Gemini model IDs with /model.")
         elif command == "/graph":
             await self.action_graph()
         elif command == "/trace":
@@ -254,15 +263,30 @@ class CapitalApp(App):
         self.query_one("#session-list", Static).update("\n".join(self.sessions[-5:]))
 
     async def action_graph(self) -> None:
-        status = self.agent.graph.status()
+        check = getattr(self.agent.graph, "health", self.agent.graph.status)
+        status = await asyncio.to_thread(check)
+        details = []
+        for key in ("native_ready", "import_ok", "package_version", "python_version", "platform", "architecture",
+                    "sync_status", "snapshot_id", "schema_version", "graph_used", "startup_ms"):
+            if key in status:
+                details.append(f"**{key.replace('_', ' ').title()}:** {plain(status[key], 200)}")
+        if counts := status.get("counts"):
+            details.append("**Grounded graph counts:** " + ", ".join(f"{plain(key)} {plain(value)}" for key, value in counts.items()))
+        if sample := status.get("sample_cypher"):
+            details.append("**Actual sample Cypher:** `" + plain(sample.get("query", ""), 500) + "`")
+            details.append("**Sample results:** " + plain(sample.get("rows", []), 1500))
+        if retrieval := status.get("sample_retrieval"):
+            details.append(f"**Sample graph context used:** {bool(retrieval.get('used'))}")
+            details.append("**Matched entities:** " + plain(retrieval.get("entities", []), 1000))
         await self._notice("## Graph backend\n\n" + plain(status.get("backend", "unknown")) +
                            " — " + plain(status.get("status", "status unavailable")) +
-                           "\n\n" + plain(status.get("reason", "No backend explanation recorded.")))
+                           "\n\n" + plain(status.get("reason", "No backend explanation recorded.")) +
+                           ("\n\n" + "\n\n".join(details) if details else ""))
 
     def _latest_answer(self):
-        cards = list(self.query(AnswerCard))
-        if cards:
-            return cards[-1]
+        for screen in reversed(self.screen_stack):
+            if cards := list(screen.query(AnswerCard)):
+                return cards[-1]
         self.notify("Ask a question first.")
         return None
 
@@ -282,10 +306,16 @@ class CapitalApp(App):
                 card.query_one(".execution-trace", Collapsible).collapsed = False
 
     def action_timeline_up(self) -> None:
+        if isinstance(self.focused, (DataTable, VerticalScroll)):
+            self.focused.action_page_up()
+            return
         timeline = self.query_one("#timeline", VerticalScroll)
         timeline.scroll_relative(y=-max(1, timeline.content_size.height - 2), animate=False, immediate=True)
 
     def action_timeline_down(self) -> None:
+        if isinstance(self.focused, (DataTable, VerticalScroll)):
+            self.focused.action_page_down()
+            return
         timeline = self.query_one("#timeline", VerticalScroll)
         timeline.scroll_relative(y=max(1, timeline.content_size.height - 2), animate=False, immediate=True)
 

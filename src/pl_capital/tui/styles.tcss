@@ -40,6 +40,8 @@ Screen {
     border: none;
 }
 .answer-headline { height: auto; text-style: bold; color: $foreground; background: $surface; }
+.answer-status { height: 1; color: $text-muted; }
+.answer-next-step { height: auto; color: $text-primary; margin-top: 1; }
 .answer-body { height: auto; margin: 0; padding: 0; color: $foreground; }
 .explanation-title { height: 1; text-style: bold; color: $text-secondary; margin-top: 1; }
 .explanation-step { height: auto; color: $foreground; }
@@ -72,7 +74,21 @@ Footer { background: $panel; }
 Collapsible > Contents { padding: 0 1; }
 .trace-detail, .code-view { height: auto; margin-bottom: 1; background: $panel; color: $foreground; }
 .copy-sql { margin: 1 0; min-width: 12; width: auto; max-width: 100%; }
-.result-table { height: auto; background: $surface; color: $foreground; }
+.result-table { width: 100%; min-height: 3; background: $surface; color: $foreground; scrollbar-size: 1 1; margin-top: 1; }
+.result-table:focus { border: solid $primary; }
+.result-table > .datatable--header, .result-table > .datatable--fixed { background: $panel; color: $foreground; text-style: bold; }
+.result-table > .datatable--odd-row { background: $surface; color: $foreground; }
+.result-table > .datatable--even-row { background: $panel; color: $foreground; }
+.table-instructions { height: auto; color: $text-muted; }
+.full-table { height: 3; min-width: 12; margin-top: 1; }
+.column-legend { height: auto; border: none; padding: 0; background: $surface; }
+.column-legend Static { height: auto; }
+FullTableScreen, RecordDetailScreen { align: center middle; background: $background 85%; }
+.table-dialog { width: 96%; height: 90%; padding: 1; background: $surface; border: round $primary; }
+.table-dialog > Collapsible { height: auto; max-height: 8; }
+.table-dialog > .close-table { height: 3; margin-top: 1; }
+.record-fields { height: 1fr; }
+.record-field { height: auto; margin-bottom: 1; }
 .exposure-card { height: auto; margin: 0; padding: 0; background: $surface; color: $foreground; }
 .exposure-totals { height: auto; color: $text-muted; }
 .answer-actions { height: 3; margin-top: 1; }
