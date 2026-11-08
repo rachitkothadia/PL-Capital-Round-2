@@ -39,13 +39,27 @@ class AnswerView:
     sections: list[EvidenceSection]
 
 
+def _number_units(text: str, column: str, currency: str | None) -> str:
+    label = column.lower()
+    if label.endswith("_pp") or "percentage_points" in label:
+        return text + " pp"
+    if "percentage" in label or label.endswith("_pct"):
+        return text + "%"
+    if any(word in label for word in ("ratio", "fraction", "weight", "share", "hhi")):
+        return text
+    money = any(word in label for word in (
+        "price", "aum", "value", "cost_basis", "notional", "proceeds", "fees", "nav",
+    ))
+    return "$" + text if money and currency == "USD" else text
+
+
 def format_cell(value, column: str = "", *, currency: str | None = None) -> str:
     if value is None:
         return "Not available"
     if isinstance(value, bool):
         return "Yes" if value else "No"
     if isinstance(value, int):
-        return f"{value:,}"
+        return _number_units(f"{value:,}", column, currency)
     if isinstance(value, float | Decimal):
         if not math.isfinite(float(value)):
             return "Not available"
@@ -58,25 +72,7 @@ def format_cell(value, column: str = "", *, currency: str | None = None) -> str:
             + f"{int(whole):,}"
             + ("." + fraction if fraction else "")
         )
-        label = column.lower()
-        if "percentage" in label or label.endswith("_pct"):
-            return text + "%"
-        money = any(
-            word in label
-            for word in (
-                "price",
-                "aum",
-                "value",
-                "cost_basis",
-                "notional",
-                "proceeds",
-                "fees",
-                "nav",
-            )
-        )
-        if money and currency == "USD":
-            return "$" + text
-        return text
+        return _number_units(text, column, currency)
     return clean_text(value)
 
 

@@ -94,6 +94,16 @@ def test_numbers_keep_small_differences_and_null_is_not_zero():
     assert "719.245" in format_cell(719.245, "avg_price", currency="USD")
 
 
+def test_financial_ratios_and_percentage_point_gaps_are_not_currency():
+    from pl_capital.presentation import format_cell
+
+    assert format_cell(.147, "holdings_to_aum_ratio", currency="USD") == "0.147"
+    assert format_cell(.02, "equity_value_fraction", currency="USD") == "0.02"
+    assert format_cell(-.0000042, "discrepancy_percentage_points", currency="USD") == "-0.0000042 pp"
+    assert format_cell(2, "gap_pp", currency="USD") == "2 pp"
+    assert format_cell(1200, "market_value", currency="USD") == "$1,200"
+
+
 def test_sql_operations_explain_actual_join_filter_and_grouping():
     from pl_capital.presentation import build_answer_view
 
