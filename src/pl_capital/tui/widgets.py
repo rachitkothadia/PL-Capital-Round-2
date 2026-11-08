@@ -1,21 +1,26 @@
+import asyncio
 import json
-import os
 import re
-import tempfile
 
+from rich import box
+from rich.cells import cell_len
 from rich.syntax import Syntax
+from rich.table import Table
+from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Vertical
+from textual.containers import Horizontal, Vertical
 from textual.message import Message
 from textual.widgets import Button, Collapsible, Markdown, Static, TextArea
 
+from pl_capital.clipboard import eligible_sql
+from pl_capital.errors import CapitalError
 from pl_capital.models import Answer
 
 
 def plain(value: object, limit: int = 2000) -> str:
     """Treat dataset/model strings as text, including terminal control sequences."""
-    text = re.sub(r"[\x00-\x08\x0b-\x1f\x7f]", "", str(value))
+    text = re.sub(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]", "", str(value))
     return re.sub(r"(?:gsk_|gh[pousr]_|sk-proj-)[A-Za-z0-9_-]{20,}", "[credential redacted]", text)[:limit]
 
 
@@ -35,29 +40,6 @@ def safe_json(value: object) -> str:
         return plain(item, 3000) if isinstance(item, str) else item
 
     return plain(json.dumps(clean(value), indent=2, ensure_ascii=True, default=str), 12000)
-
-
-def cell(value: object) -> str:
-    if value is None:
-        return "—"
-    return plain(value, 120).replace("|", "\\|").replace("\n", " ")
-
-
-def result_markdown(answer: Answer) -> str:
-    text = plain(answer.error or answer.message)
-    result = answer.result
-    if result.get("columns"):
-        columns = result["columns"]
-        lines = [" | ".join(cell(c) for c in columns), " | ".join("---" for _ in columns)]
-        lines += [" | ".join(cell(v) for v in row) for row in result.get("rows", [])[:100]]
-        text += "\n\n" + "\n".join(lines)
-        count = result.get("row_count", len(result.get("rows", [])))
-        text += f"\n\n{count} returned row(s) · historical snapshot"
-        if len(result.get("rows", [])) > 100:
-            text += "\n\nShowing first 100 rows; use CLI --json for the complete bounded result."
-    if answer.warnings:
-        text += "\n\n" + "\n\n".join(f"**Note:** {plain(w)}" for w in answer.warnings)
-    return text
 
 
 class Composer(TextArea):
@@ -81,95 +63,177 @@ class Composer(TextArea):
     def action_newline(self) -> None:
         self.insert("\n")
 
+    def on_text_area_changed(self, _event: TextArea.Changed) -> None:
+        self._fit_height()
+
+    def on_resize(self) -> None:
+        self._fit_height()
+
+    def _fit_height(self) -> None:
+        width = max(1, self.content_size.width)
+        lines = sum(max(1, (cell_len(line) + width - 1) // width) for line in self.document.lines)
+        self.styles.height = min(7, max(3, lines + 2))
+
+
+class CodeView(Static):
+    def __init__(self, code: str, language: str = "sql", *, classes: str = ""):
+        super().__init__(classes="code-view " + classes)
+        self.code = plain(code, 30000)
+        self.language = language
+        self.syntax_theme_name = "monokai"
+        self.syntax = Syntax(self.code, self.language, theme=self.syntax_theme_name, word_wrap=True)
+
+    def render(self):
+        return self.syntax
+
+    def on_mount(self) -> None:
+        self.apply_theme(self.app.current_theme)
+
+    def apply_theme(self, theme) -> None:
+        self.syntax_theme_name = "monokai" if theme.dark else "friendly"
+        self.syntax = Syntax(
+            self.code, self.language, theme=self.syntax_theme_name, word_wrap=True,
+            background_color=theme.panel or theme.surface or theme.background,
+            padding=(0, 1),
+        )
+        self.refresh(layout=True)
+
+
+class ResultTable(Static):
+    """A compact, wrapping table shares the conversation's single scrollbar."""
+
+    def __init__(self, table_view):
+        super().__init__(classes="result-table")
+        self.table_view = table_view
+
+    def render(self):
+        table = Table(box=box.SIMPLE_HEAD, expand=True, show_edge=False, padding=(0, 1))
+        for column in self.table_view.columns:
+            table.add_column(Text(plain(column, 120)), header_style="bold", overflow="fold")
+        for row in self.table_view.rows[:8]:
+            table.add_row(*[Text(plain(value, 300)) for value in row])
+        if self.table_view.total_rows > 8:
+            table.caption = f"First 8 of {self.table_view.total_rows} returned rows; export includes the bounded full result."
+        elif self.table_view.truncated:
+            table.caption = "Query result reached its row cap; narrow the request."
+        return table
+
 
 class AnswerCard(Vertical):
-    def __init__(self, answer: Answer, *, trace_expanded: bool = False):
+    def __init__(self, answer: Answer):
+        from pl_capital.presentation import build_answer_view
+
         super().__init__(classes="answer-card")
         self.answer = answer
-        self.trace_expanded = trace_expanded
+        self.view = build_answer_view(answer)
 
     def compose(self) -> ComposeResult:
-        label = "ANALYSIS" if not self.answer.error else "ACTION NEEDED"
-        yield Static(label, classes="role-label", markup=False)
-        yield Markdown(result_markdown(self.answer), classes="answer-body", open_links=False)
-        if "sectors" in self.answer.result:
-            yield ExposureCard(self.answer.result)
-        with Collapsible(title="Execution trace / How this answer was computed",
-                         collapsed=not self.trace_expanded, classes="execution-trace"):
-            if not self.answer.trace:
-                yield Static("No operational events were recorded for this response.", markup=False)
-            for index, event in enumerate(self.answer.trace, start=1):
-                yield Static(f"{index:02d}  {plain(event.stage, 80)}  ·  {event.elapsed_ms:.1f} ms",
-                             classes="trace-heading", markup=False)
-                yield Static(plain(event.detail, 3000), classes="trace-detail", markup=False)
-                if event.data:
-                    yield Static(Syntax(safe_json(event.data), "json", theme="monokai", word_wrap=True),
-                                 classes="trace-data")
-            if self.answer.sql:
-                yield Static("EXECUTED SQL", classes="trace-heading", markup=False)
-                yield Static(Syntax(plain(self.answer.sql, 30000), "sql", theme="monokai", word_wrap=True),
-                             classes="executed-sql")
-                yield Static("Bound parameters (credentials redacted)", classes="trace-heading", markup=False)
-                yield Static(Syntax(safe_json(self.answer.parameters), "json", theme="monokai", word_wrap=True))
-                sources = ", ".join(self.answer.result.get("source_tables", [])) or "See execution events"
-                yield Static(f"Source tables: {plain(sources, 1000)}\nReturned rows: "
-                             f"{self.answer.result.get('row_count', 0)} · Overall {self.answer.elapsed_ms:.1f} ms",
-                             classes="trace-detail", markup=False)
-                yield Button("Copy SQL + export", classes="copy-sql", variant="primary")
+        yield Static(plain(self.view.headline, 400), classes="answer-headline", markup=False)
+        if self.view.table:
+            if "sectors" in self.answer.result:
+                with Vertical(classes="exposure-card"):
+                    yield ResultTable(self.view.table)
+                    result = self.answer.result
+                    yield Static(
+                        f"Equity weight {result.get('equity_weight_total', '—')} · "
+                        f"Bond weight {result.get('bond_weight_total', '—')} · "
+                        f"Recorded total {result.get('all_recorded_weights_total', '—')}\n"
+                        f"{result.get('equity_holding_count', 0)} stock holdings · "
+                        f"{result.get('bond_exclusion_count', 0)} bond holdings excluded",
+                        classes="exposure-totals", markup=False,
+                    )
+            else:
+                yield ResultTable(self.view.table)
+        if self.view.message:
+            yield Markdown(plain(self.view.message, 1800), classes="answer-body", open_links=False)
+        yield Static("How this was calculated", classes="explanation-title", markup=False)
+        for step in self.view.steps[:5]:
+            yield Static("• " + plain(step, 700), classes="explanation-step", markup=False)
+        yield Static(plain(self.view.provenance, 900), classes="provenance", markup=False)
+        for warning in self.view.warnings:
+            yield Static("Note: " + plain(warning, 700), classes="answer-warning", markup=False)
+        sql = self._eligible_sql()
+        with Horizontal(classes="answer-actions"):
+            yield Button("Copy SQL", classes="copy-sql", disabled=not sql,
+                         tooltip="Copy exact executed SQL." if sql else "No safe executed SQL is available.")
+            yield Button("Export answer", classes="export-answer")
+            yield Button("Save SQL", classes="save-sql")
+        if not sql:
+            yield Static("Copy SQL requires safe, successfully executed SQL.", classes="sql-unavailable", markup=False)
+        yield Static("", classes="action-feedback", markup=False)
+        with Collapsible(title="Execution details", collapsed=True, classes="execution-trace"):
+            for section in self.view.sections:
+                with Collapsible(title=plain(section.title, 100), collapsed=True, classes="evidence-section"):
+                    for line in section.lines:
+                        yield Static(plain(line, 1500), classes="trace-detail", markup=False)
+                    if section.code:
+                        yield CodeView(section.code, section.language,
+                                       classes="executed-sql" if section.code == getattr(self.answer, "executed_sql", None) else "")
+            with Collapsible(title="Raw diagnostics / JSON (redacted, bounded)", collapsed=True, classes="raw-diagnostics"):
+                from pl_capital.presentation import diagnostic_payload
+
+                yield CodeView(safe_json(diagnostic_payload(self.answer,
+                    secret=getattr(self.app.agent.settings, "api_key", ""))), "json", classes="raw-json")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        if not event.button.has_class("copy-sql") or not self.answer.sql:
+        actions = {"copy-sql": self.copy_sql, "export-answer": self.export_answer, "save-sql": self.save_sql}
+        for name, callback in actions.items():
+            if event.button.has_class(name):
+                event.stop()
+                self.app.run_worker(callback(), name=name, group="answer-actions")
+                return
+
+    def _eligible_sql(self) -> str | None:
+        return eligible_sql(self.answer, getattr(self.app.agent.settings, "api_key", ""))
+
+    def _feedback(self, message: str) -> None:
+        feedback = self.query_one(".action-feedback", Static)
+        feedback.update(plain(message, 3000))
+        feedback.display = True
+
+    def show_sql(self) -> None:
+        if not self.query(".executed-sql"):
             return
-        event.stop()
-        sql = plain(self.answer.sql, 30000)
+        parent = self.query_one(".executed-sql").parent
+        while parent is not None and parent is not self:
+            if isinstance(parent, Collapsible):
+                parent.collapsed = False
+            parent = parent.parent
+
+    async def copy_sql(self) -> None:
+        if not self._eligible_sql():
+            self._feedback("No safe executed SQL is available for this answer.")
+            return
         try:
-            cache = self.app.agent.settings.cache_dir
-            cache.mkdir(parents=True, exist_ok=True)
-            fd, name = tempfile.mkstemp(prefix="query-", suffix=".sql", dir=cache)
-            try:
-                with os.fdopen(fd, "w", encoding="utf-8") as stream:
-                    stream.write(sql + "\n")
-                os.replace(name, cache / "last-query.sql")
-            finally:
-                if os.path.exists(name):
-                    os.unlink(name)
-            self.app.copy_to_clipboard(sql)
-            self.app.notify("SQL exported to cache/last-query.sql; clipboard requested. Terminal support varies.")
-        except OSError:
-            self.app.notify("SQL remains visible in the expanded trace; export unavailable.", severity="warning")
-
-
-class ExposureCard(Vertical):
-    def __init__(self, result: dict):
-        super().__init__(classes="exposure-card")
-        self.result = result
-
-    def compose(self) -> ComposeResult:
-        data = self.result
-        yield Static("SECTOR EXPOSURE  /  " + plain(data.get("portfolio_name", ""), 160),
-                     classes="exposure-heading", markup=False)
-        yield Static("Stock holdings only · recorded current_weight fractions", markup=False)
-        for sector in data.get("sectors", []):
-            whole = sector["whole_portfolio_pct"]
-            normalized = sector["equity_normalized_pct"]
-            filled = round(max(0, min(100, whole)) / 5)
-            bar = "#" * filled + "." * (20 - filled)
-            yield Static(
-                f"{plain(sector['sector'], 80)}\n"
-                f"Whole portfolio   {whole:7.2f}%  [{bar}]\n"
-                f"Equity normalized {normalized:7.2f}%  (stock denominator)",
-                classes="sector-row", markup=False,
+            outcome = await asyncio.to_thread(
+                self.app.clipboard_service.copy_sql, self.answer,
+                terminal_copy=lambda sql: self.app.call_from_thread(self.app.copy_to_clipboard, sql),
             )
-        if not data.get("sectors"):
-            yield Static("No equity holdings to break down. No normalization applied.", markup=False)
-        yield Static(
-            f"Equity weight total: {plain(data.get('equity_weight_total'), 80)}\n"
-            f"Bond weight total: {plain(data.get('bond_weight_total'), 80)}\n"
-            f"All recorded weights: {plain(data.get('all_recorded_weights_total'), 80)}\n"
-            f"{data.get('equity_holding_count', 0)} stock holdings · "
-            f"{data.get('bond_exclusion_count', 0)} bond holdings excluded",
-            classes="exposure-totals", markup=False,
-        )
-        yield Static("Whole = sector stock weight × 100\n"
-                     "Normalized = sector stock weight / equity weight total × 100",
-                     classes="exposure-formula", markup=False)
+            self._feedback(outcome.message)
+            if not outcome.confirmed:
+                self.query_one(".save-sql", Button).display = True
+                self.show_sql()
+        except CapitalError as exc:
+            self._feedback(str(exc))
+        except Exception:
+            self._feedback("Clipboard is unavailable. Use the displayed SQL or Save SQL.")
+            self.query_one(".save-sql", Button).display = True
+            self.show_sql()
+
+    async def export_answer(self) -> None:
+        try:
+            path = await asyncio.to_thread(self.app.export_service.export_answer, self.answer)
+            self._feedback(f"Answer exported to {path}")
+        except CapitalError as exc:
+            self._feedback(str(exc))
+        except Exception:
+            self._feedback("Answer export failed safely; check the configured cache directory.")
+
+    async def save_sql(self) -> None:
+        try:
+            path = await asyncio.to_thread(self.app.export_service.save_sql, self.answer)
+            self._feedback(f"Executed SQL saved to {path}")
+        except CapitalError as exc:
+            self._feedback(str(exc))
+        except Exception:
+            self._feedback("SQL export failed safely; check the configured cache directory.")

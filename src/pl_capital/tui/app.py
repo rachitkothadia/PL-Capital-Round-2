@@ -1,5 +1,4 @@
 import asyncio
-import json
 from collections.abc import Iterable
 
 from textual import on
@@ -9,10 +8,14 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import Screen
 from textual.widgets import Collapsible, Footer, LoadingIndicator, Markdown, Static
 
+from pl_capital.clipboard import ClipboardService
 from pl_capital.config import MODELS
 from pl_capital.errors import CapitalError
+from pl_capital.exporting import ExportService
 from pl_capital.models import Answer
-from pl_capital.tui.widgets import AnswerCard, Composer, plain
+from pl_capital.tui.preferences import THEMES, load_theme, save_theme
+from pl_capital.tui.themes import DARK_THEME, LIGHT_THEME, ThemeChooser
+from pl_capital.tui.widgets import AnswerCard, CodeView, Composer, plain
 
 HELP = """## Portfolio workspace
 Ask descriptive questions about the supplied historical portfolio snapshot.
@@ -27,7 +30,13 @@ Ask descriptive questions about the supplied historical portfolio snapshot.
 `/graph` — inspect actual graph backend and fallback reason  
 `/trace` — expand or collapse recorded execution events  
 `/eval` — run all supplied questions through the live agent  
+`/theme` — choose a theme; `/theme dark` or `/theme light` applies it  
+`/copy` or **F6** — copy the latest answer's exact executed SQL  
+`/export` or **F7** — export the latest answer as private JSON  
+`/debug` — explicitly toggle the latest answer's raw diagnostics  
 `/quit` or `:q` — exit
+
+**PageUp / PageDown** scroll the conversation. **F2** opens the theme chooser.
 
 No live prices or personal investment recommendations. Session history stays in memory and ends when the app closes.
 """
@@ -42,16 +51,24 @@ class CapitalApp(App):
         Binding("ctrl+l", "new_session", "New session"),
         Binding("f1", "help", "Help"),
         Binding("ctrl+t", "toggle_trace", "Trace", priority=True),
+        Binding("f2", "choose_theme", "Theme", priority=True),
+        Binding("f6", "copy_sql", "Copy SQL", priority=True),
+        Binding("f7", "export_answer", "Export", priority=True),
+        Binding("pageup", "timeline_up", "Scroll up", priority=True, show=False),
+        Binding("pagedown", "timeline_down", "Scroll down", priority=True, show=False),
     ]
 
-    def __init__(self, agent):
+    def __init__(self, agent, *, clipboard_service=None, export_service=None):
         super().__init__()
         self.agent = agent
+        self.clipboard_service = clipboard_service or ClipboardService(agent.settings)
+        self.export_service = export_service or ExportService(agent.settings)
         self.busy = False
         self.sessions = ["Session 1"]
         self.turn_count = 0
         self.trace_expanded = False
         self.session_number = 1
+        self.preferences_dir = getattr(agent.settings, "config_dir", None) or agent.settings.cache_dir / "preferences"
 
     def compose(self) -> ComposeResult:
         yield Static("PL CAPITAL  /  portfolio workspace", id="banner", markup=False)
@@ -73,7 +90,8 @@ class CapitalApp(App):
                         id="welcome", open_links=False,
                     )
                 yield LoadingIndicator(id="loading")
-                yield Composer(id="composer", soft_wrap=True, show_line_numbers=False)
+                yield Composer(id="composer", soft_wrap=True, show_line_numbers=False,
+                               placeholder="Ask about the supplied portfolios…")
                 yield Static("Enter send · Ctrl+J newline · Ctrl+P commands", id="composer-hint")
             with Vertical(id="inspector"):
                 yield Static("CONTEXT", classes="section-title")
@@ -87,6 +105,10 @@ class CapitalApp(App):
         yield Footer()
 
     def on_mount(self) -> None:
+        self.register_theme(DARK_THEME)
+        self.register_theme(LIGHT_THEME)
+        self.theme_changed_signal.subscribe(self, self._theme_changed)
+        self.theme = load_theme(self.preferences_dir)
         self.query_one("#loading").display = False
         self.query_one("#composer").focus()
         self._resize_panels(self.size.width)
@@ -96,8 +118,8 @@ class CapitalApp(App):
             self._resize_panels(event.size.width)
 
     def _resize_panels(self, width: int) -> None:
-        self.query_one("#sidebar").display = width >= 100
-        self.query_one("#inspector").display = width >= 140
+        self.query_one("#sidebar").display = width >= 120
+        self.query_one("#inspector").display = width >= 160
 
     def get_system_commands(self, screen: Screen) -> Iterable[SystemCommand]:
         yield from super().get_system_commands(screen)
@@ -107,13 +129,21 @@ class CapitalApp(App):
         yield SystemCommand("Clear portfolio conversation", "Remove current messages and context", self.action_clear)
         yield SystemCommand("Toggle execution traces", "Expand or collapse actual operational events", self.action_toggle_trace)
         yield SystemCommand("Run live ground truth evaluation", "Call Groq for all supplied questions", self.action_evaluate)
+        yield SystemCommand("Choose portfolio theme", "Switch between readable dark and light palettes", self.action_choose_theme)
+        yield SystemCommand("Portfolio theme: dark", "Apply the restrained dark palette", self.action_theme_dark)
+        yield SystemCommand("Portfolio theme: light", "Apply the bright light palette", self.action_theme_light)
+        yield SystemCommand("Copy latest executed SQL", "Copy validated SQL; show a manual fallback when unavailable", self.action_copy_sql)
+        yield SystemCommand("Export latest answer", "Save safe JSON in the private application cache", self.action_export_answer)
 
     async def _append(self, widget) -> None:
         timeline = self.query_one("#timeline", VerticalScroll)
         await timeline.mount(widget)
         while len(timeline.children) > 100:
             await timeline.children[0].remove()
-        timeline.scroll_end(animate=False)
+        if isinstance(widget, AnswerCard):
+            self.call_after_refresh(timeline.scroll_to_widget, widget, top=True, animate=False, immediate=True)
+        else:
+            timeline.scroll_end(animate=False)
 
     async def _notice(self, text: str) -> None:
         await self._append(Markdown(text, classes="notice", open_links=False))
@@ -144,7 +174,7 @@ class CapitalApp(App):
         try:
             answer = await asyncio.to_thread(self.agent.answer_question, question)
             self.turn_count += 1
-            await self._append(AnswerCard(answer, trace_expanded=self.trace_expanded))
+            await self._append(AnswerCard(answer))
             self.query_one("#status", Static).update(
                 f"{'ACTION NEEDED' if answer.error else 'READY'}  ·  "
                 f"{answer.tool or answer.intent}  ·  {answer.elapsed_ms:.0f} ms"
@@ -187,6 +217,19 @@ class CapitalApp(App):
             self.action_toggle_trace()
         elif command == "/eval":
             self.action_evaluate()
+        elif command == "/theme":
+            if not argument.strip():
+                self.action_choose_theme()
+            elif argument.strip().lower() in THEMES:
+                self._set_theme(argument.strip().lower())
+            else:
+                await self._notice("Choose `/theme dark` or `/theme light`, or press F2 for the chooser.")
+        elif command == "/copy":
+            self.action_copy_sql()
+        elif command == "/export":
+            self.action_export_answer()
+        elif command == "/debug":
+            self.action_toggle_debug()
         else:
             await self._notice("Unknown command. Type /help for working commands.")
 
@@ -211,7 +254,61 @@ class CapitalApp(App):
 
     async def action_graph(self) -> None:
         status = self.agent.graph.status()
-        await self._notice("## Graph backend\n\n```json\n" + plain(json.dumps(status, indent=2), 6000) + "\n```")
+        await self._notice("## Graph backend\n\n" + plain(status.get("backend", "unknown")) +
+                           " — " + plain(status.get("status", "status unavailable")) +
+                           "\n\n" + plain(status.get("reason", "No backend explanation recorded.")))
+
+    def _latest_answer(self):
+        cards = list(self.query(AnswerCard))
+        if cards:
+            return cards[-1]
+        self.notify("Ask a question first.")
+        return None
+
+    def action_copy_sql(self) -> None:
+        if card := self._latest_answer():
+            self.run_worker(card.copy_sql(), name="copy-sql", group="answer-actions")
+
+    def action_export_answer(self) -> None:
+        if card := self._latest_answer():
+            self.run_worker(card.export_answer(), name="export-answer", group="answer-actions")
+
+    def action_toggle_debug(self) -> None:
+        if card := self._latest_answer():
+            debug = card.query_one(".raw-diagnostics", Collapsible)
+            debug.collapsed = not debug.collapsed
+            if not debug.collapsed:
+                card.query_one(".execution-trace", Collapsible).collapsed = False
+
+    def action_timeline_up(self) -> None:
+        timeline = self.query_one("#timeline", VerticalScroll)
+        timeline.scroll_relative(y=-max(1, timeline.content_size.height - 2), animate=False, immediate=True)
+
+    def action_timeline_down(self) -> None:
+        timeline = self.query_one("#timeline", VerticalScroll)
+        timeline.scroll_relative(y=max(1, timeline.content_size.height - 2), animate=False, immediate=True)
+
+    def _theme_changed(self, theme) -> None:
+        for widget in self.query(CodeView):
+            widget.apply_theme(theme)
+        if theme.name in THEMES.values():
+            try:
+                save_theme(self.preferences_dir, theme.name)
+            except OSError:
+                self.notify("Theme applied for this run; preference could not be saved.", severity="warning")
+
+    def _set_theme(self, choice: str | None) -> None:
+        if choice in THEMES:
+            self.theme = THEMES[choice]
+
+    def action_choose_theme(self) -> None:
+        self.push_screen(ThemeChooser(), self._set_theme)
+
+    def action_theme_dark(self) -> None:
+        self._set_theme("dark")
+
+    def action_theme_light(self) -> None:
+        self._set_theme("light")
 
     def action_toggle_trace(self) -> None:
         traces = list(self.query(".execution-trace"))

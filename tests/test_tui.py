@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -18,7 +19,9 @@ class FakeAgent:
         return Answer(
             intent="sql_query", tool="sql_query", message="13 portfolios in the supplied snapshot.",
             sql="SELECT COUNT(*) FROM portfolios", result={"columns": ["count"], "rows": [[13]],
+            "source_tables": ["portfolios"],
             "row_count": 1}, trace=[TraceEvent(stage="validation", detail="Read-only SQL accepted")],
+            executed_sql="SELECT COUNT(*) FROM portfolios",
         )
 
     def reset_context(self):
@@ -49,7 +52,7 @@ async def test_enter_calls_agent_and_renders_result(tmp_path):
         assert agent.questions == ["How many portfolios?"]
         assert app.query_one("#composer").text == ""
         assert len(app.query(".answer-card")) == 1
-        assert "13" in app.query_one(".answer-body").source
+        assert "13" in str(app.query_one(".answer-headline").render())
 
 
 @pytest.mark.asyncio
@@ -99,7 +102,7 @@ async def test_agent_error_is_visible_without_crash(tmp_path):
     app = CapitalApp(agent)
     async with app.run_test(size=(85, 26)) as pilot:
         await send(app, pilot, "A question")
-        assert "Groq unavailable" in app.query_one(".answer-body").source
+        assert "Groq unavailable" in str(app.query_one(".answer-headline").render())
         assert not app.busy
 
 
@@ -108,9 +111,15 @@ async def test_agent_error_is_visible_without_crash(tmp_path):
 async def test_trace_keyboard_toggle_and_copy_sql_export(tmp_path, monkeypatch, size):
     from textual.widgets import Button, Collapsible
 
+    from pl_capital.clipboard import ClipboardOutcome
     from pl_capital.tui.app import CapitalApp
 
-    app = CapitalApp(FakeAgent(tmp_path))
+    class ApplicationClipboard:
+        def copy_sql(self, answer, *, terminal_copy):
+            terminal_copy(answer.executed_sql)
+            return ClipboardOutcome(True, "mock", "SQL copied using a mocked clipboard.")
+
+    app = CapitalApp(FakeAgent(tmp_path), clipboard_service=ApplicationClipboard())
     copied = []
     monkeypatch.setattr(app, "copy_to_clipboard", copied.append)
     async with app.run_test(size=size) as pilot:
@@ -122,15 +131,26 @@ async def test_trace_keyboard_toggle_and_copy_sql_export(tmp_path, monkeypatch, 
         await pilot.press("enter")
         await pilot.pause()
         assert not trace.collapsed
-        assert "Read-only SQL accepted" in str(app.query_one(".trace-detail").render())
+        steps = " ".join(str(widget.render()) for widget in app.query(".explanation-step"))
+        assert "read-only SELECT" in steps
         copy_button = app.query_one(".copy-sql", Button)
         copy_button.focus(scroll_visible=False)
         copy_button.scroll_visible(animate=False, immediate=True)
         await pilot.pause()
         assert await pilot.click(copy_button, offset=(2, 1))
         await pilot.pause()
+        await app.workers.wait_for_complete()
         assert copied == ["SELECT COUNT(*) FROM portfolios"]
-        assert (tmp_path / "last-query.sql").read_text() == copied[0] + "\n"
+        export_button = app.query_one(".export-answer", Button)
+        export_button.focus(scroll_visible=False)
+        export_button.scroll_visible(animate=False, immediate=True)
+        await pilot.pause()
+        assert await pilot.click(export_button, offset=(2, 1))
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        paths = list((tmp_path / "exports").glob("*.json"))
+        assert len(paths) == 1
+        assert json.loads(paths[0].read_text())["sql"] == copied[0]
         await send(app, pilot, "/trace")
         assert trace.collapsed
 
@@ -152,8 +172,13 @@ async def test_exposure_card_uses_both_denominators_and_coverage(tmp_path):
     async with app.run_test(size=(100, 40)) as pilot:
         await send(app, pilot, "Mixed fund exposure")
         card = app.query_one(".exposure-card")
-        rendered = " ".join(str(widget.render()) for widget in card.query("Static"))
-        assert "40.00%" in rendered and "100.00%" in rendered
+        from rich.console import Console
+
+        console = Console(width=100, color_system=None)
+        with console.capture() as capture:
+            console.print(card.query_one(".result-table").render())
+        rendered = capture.get() + " ".join(str(widget.render()) for widget in card.query("Static"))
+        assert "40%" in rendered and "100%" in rendered
         assert "0.6" in rendered and "3" in rendered
         assert "Technology" in rendered
 

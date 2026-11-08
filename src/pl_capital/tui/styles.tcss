@@ -1,73 +1,88 @@
 Screen {
-    background: #10141d;
-    color: #e2e8f0;
+    background: $background;
+    color: $foreground;
 }
 #banner {
-    height: 3;
+    height: 2;
     content-align: left middle;
     padding: 0 2;
-    background: #172235;
-    color: #87d7ca;
+    background: $panel;
+    color: $foreground;
     text-style: bold;
-    border-bottom: solid #30465b;
+    border-bottom: solid $border-blurred;
 }
 #workspace { height: 1fr; }
 #sidebar {
-    width: 26;
-    padding: 1 2;
-    background: #131b28;
-    border-right: solid #26354b;
+    width: 22;
+    padding: 0 1;
+    background: $panel;
+    border-right: solid $border-blurred;
 }
 #sidebar Static, #inspector Static { height: auto; margin-bottom: 1; }
-.section-title { color: #87d7ca; text-style: bold; margin-top: 1; }
-.muted { color: #a3b0c7; }
+.section-title { color: $text-primary; text-style: bold; margin-top: 1; }
+.muted { color: $text-muted; }
 #main { width: 1fr; padding: 0 1; }
-#timeline { height: 1fr; scrollbar-color: #52657c; }
-#welcome { margin: 2 2; padding: 1 2; color: #c4d5e9; }
+#timeline { height: 1fr; scrollbar-size: 1 1; }
+#welcome { margin: 1; padding: 1; color: $foreground; }
 .user-card {
     height: auto;
-    margin: 1 1 0 3;
-    padding: 1 2;
-    background: #22354a;
-    border-left: thick #87d7ca;
+    margin: 1 0 0 2;
+    padding: 0 1;
+    background: $panel;
+    color: $foreground;
 }
 .answer-card {
     height: auto;
-    margin: 1 2 1 1;
-    padding: 1 2;
-    background: #182131;
-    border-left: thick #d5b677;
+    margin: 1 0;
+    padding: 1;
+    background: $surface;
+    color: $foreground;
+    border: none;
 }
-.role-label { height: 1; color: #d5b677; text-style: bold; }
-.answer-body { height: auto; margin: 0; }
-.notice { height: auto; margin: 1 2; padding: 1; background: #1a2635; }
+.answer-headline { height: auto; text-style: bold; color: $foreground; background: $surface; }
+.answer-body { height: auto; margin: 0; padding: 0; color: $foreground; }
+.explanation-title { height: 1; text-style: bold; color: $text-secondary; margin-top: 1; }
+.explanation-step { height: auto; color: $foreground; }
+.provenance { height: auto; color: $text-muted; margin-top: 1; }
+.answer-warning { height: auto; color: $text-warning; margin-top: 1; }
+.notice { height: auto; margin: 1; padding: 1; background: $panel; color: $foreground; }
 #composer {
-    height: 5;
+    height: 3;
     min-height: 3;
-    border: round #516983;
-    background: #192333;
-    color: #f0f5fc;
+    max-height: 7;
+    border: round $border-blurred;
+    background: $surface;
+    color: $foreground;
     padding: 0 1;
 }
-#composer:focus { border: round #87d7ca; }
-#composer-hint { height: 1; padding: 0 1; color: #a3b0c7; }
-#loading { height: 1; color: #87d7ca; }
+#composer:focus { border: round $primary; }
+#composer-hint { height: 1; padding: 0 1; color: $text-muted; }
+#loading { height: 1; color: $text-primary; }
 #inspector {
-    width: 30;
-    padding: 1 2;
-    background: #131b28;
-    border-left: solid #26354b;
+    width: 26;
+    padding: 0 1;
+    background: $panel;
+    border-left: solid $border-blurred;
 }
-#model-status { color: #e4c683; }
-#status { height: 1; padding: 0 2; background: #213247; color: #c6e9e0; }
-Footer { background: #172235; }
-.execution-trace { height: auto; margin-top: 1; background: #121b29; border: round #40516b; }
-.trace-heading { height: auto; margin-top: 1; color: #8dd8cb; text-style: bold; }
-.trace-detail, .trace-data, .executed-sql { height: auto; margin-bottom: 1; }
-.copy-sql { margin: 1 0; min-width: 24; }
-.exposure-card { height: auto; padding: 1; margin: 1 0; border: round #52657c; background: #142b31; }
-.exposure-card Static { height: auto; }
-.exposure-heading { color: #99e5d5; text-style: bold; }
-.sector-row { margin: 1 0; }
-.exposure-totals { color: #ecd09b; margin: 1 0; }
-.exposure-formula { color: #b5c9dc; }
+#model-status { color: $foreground; }
+#status { height: 1; padding: 0 1; background: $panel; color: $foreground; }
+Footer { background: $panel; }
+.execution-trace { height: auto; margin-top: 1; background: $panel; color: $foreground; border: none; padding: 0; }
+.evidence-section, .raw-diagnostics { height: auto; border: none; padding: 0; background: $panel; color: $foreground; }
+Collapsible > Contents { padding: 0 1; }
+.trace-detail, .code-view { height: auto; margin-bottom: 1; background: $panel; color: $foreground; }
+.copy-sql { margin: 1 0; min-width: 12; width: auto; max-width: 100%; }
+.result-table { height: auto; background: $surface; color: $foreground; }
+.exposure-card { height: auto; margin: 0; padding: 0; background: $surface; color: $foreground; }
+.exposure-totals { height: auto; color: $text-muted; }
+.answer-actions { height: 3; margin-top: 1; }
+.answer-actions Button { width: auto; min-width: 12; margin-right: 1; height: 3; }
+.save-sql { display: none; }
+.action-feedback { display: none; height: auto; color: $text-primary; margin-top: 1; }
+.sql-unavailable { height: auto; color: $text-muted; }
+ThemeChooser { align: center middle; background: $background 70%; }
+#theme-dialog { width: 52; max-width: 94%; height: auto; padding: 1 2; background: $surface; color: $foreground; border: round $primary; }
+#theme-dialog Static { height: auto; margin-bottom: 1; }
+.dialog-title { text-style: bold; }
+.theme-options { height: 3; margin-bottom: 1; }
+.theme-options Button { width: 1fr; min-width: 8; margin-right: 1; }
