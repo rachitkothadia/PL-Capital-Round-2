@@ -23,4 +23,5 @@ def db_path(settings):
 @pytest.fixture(autouse=True)
 def isolate_local_provider_preference(monkeypatch):
     """A developer's local active provider must not alter offline test defaults."""
-    monkeypatch.setenv("LLM_PROVIDER", "groq")
+    monkeypatch.setenv("LLM_PROVIDER", "gemini")
+    monkeypatch.setenv("GEMINI_MODEL", "gemini-2.5-pro")

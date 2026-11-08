@@ -48,7 +48,7 @@ def test_all_reference_sql_agrees_with_independent_python(settings):
     from pl_capital.challenges import verify_references
 
     report = verify_references(settings.data_root, settings.db_path)
-    assert report["mode"] == "reference-only; no agent or Groq calls"
+    assert report["mode"] == "reference-only; no agent or Gemini calls"
     assert report["passed"] == report["total"] == 20
     assert all(item["status"] == "pass" for item in report["questions"])
     results = {item["id"]: item["reference_result"] for item in report["questions"]}
@@ -181,7 +181,7 @@ def test_mock_cannot_be_labeled_live(settings):
     from pl_capital.challenges import evaluate_challenges
     from pl_capital.errors import ConfigurationError
 
-    with pytest.raises(ConfigurationError, match="real Groq"):
+    with pytest.raises(ConfigurationError, match="real Gemini"):
         evaluate_challenges(MockReferenceAgent(settings))
 
 
@@ -224,7 +224,7 @@ def test_fail_unsupported_and_provider_outage_are_distinct(settings):
                     intent="out_of_scope", message="This compound analysis is not supported."
                 )
             if len(self.calls) == 2:
-                return Answer(error="Groq connection failed after bounded retries.")
+                return Answer(error="Gemini connection failed after bounded retries.")
             return Answer(
                 intent="sql_query", tool="sql_query", error="SQL references an unknown column."
             )

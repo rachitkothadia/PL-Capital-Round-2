@@ -8,12 +8,12 @@ Intent = Literal["sql_query", "exposure_calculator", "clarification_needed", "ou
 class Parameter(BaseModel):
     model_config = ConfigDict(extra="forbid")
     name: str
-    # Groq rejects an integer|number union as overlapping JSON Schema types.
+    # Gemini rejects an integer|number union as overlapping JSON Schema types.
     value: str | float | bool | None
 
 
 class Plan(BaseModel):
-    """All fields required for Groq strict structured outputs."""
+    """All fields required for Gemini strict structured outputs."""
 
     model_config = ConfigDict(extra="forbid")
     intent: Intent

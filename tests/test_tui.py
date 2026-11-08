@@ -10,7 +10,7 @@ from pl_capital.models import Answer, TraceEvent
 
 class FakeAgent:
     def __init__(self, tmp_path: Path):
-        self.settings = SimpleNamespace(model="openai/gpt-oss-120b", cache_dir=tmp_path, data_root=tmp_path)
+        self.settings = SimpleNamespace(model="gemini-2.5-pro", cache_dir=tmp_path, data_root=tmp_path)
         self.graph = SimpleNamespace(status=lambda: {"backend": "sqlite", "reason": "test fallback"})
         self.questions = []
         self.resets = 0
@@ -82,8 +82,8 @@ async def test_commands_reset_context_switch_models_and_open_palette(tmp_path):
     agent = FakeAgent(tmp_path)
     app = CapitalApp(agent)
     async with app.run_test(size=(110, 35)) as pilot:
-        await send(app, pilot, "/model openai/gpt-oss-20b")
-        assert agent.settings.model == "openai/gpt-oss-20b"
+        await send(app, pilot, "/model gemini-2.5-flash")
+        assert agent.settings.model == "gemini-2.5-flash"
         await send(app, pilot, "/new")
         assert agent.resets == 1
         assert agent.questions == []
@@ -99,11 +99,11 @@ async def test_agent_error_is_visible_without_crash(tmp_path):
     from pl_capital.tui.app import CapitalApp
 
     agent = FakeAgent(tmp_path)
-    agent.answer_question = lambda _: Answer(error="Groq unavailable; retry later.")
+    agent.answer_question = lambda _: Answer(error="Gemini unavailable; retry later.")
     app = CapitalApp(agent)
     async with app.run_test(size=(85, 26)) as pilot:
         await send(app, pilot, "A question")
-        assert "Groq unavailable" in str(app.query_one(".answer-headline").render())
+        assert "Gemini unavailable" in str(app.query_one(".answer-headline").render())
         assert not app.busy
 
 

@@ -4,9 +4,9 @@ These are the exact additional question bodies from the supplied refinement mate
 
 ## Run and interpret results
 
-From the configured checkout: `uv run pl-capital challenges --references` checks references without Groq. `uv run pl-capital challenges --live --report reports/advanced.json` calls the actual agent at most once per question (its existing bounded SQL correction may add one planning call). Select a bounded subset with `--ids 1,5,12`.
+From the configured checkout: `uv run pl-capital challenges --references` checks references without Gemini. `uv run pl-capital challenges --live --report reports/advanced.json` calls the actual agent at most once per question (its existing bounded SQL correction may add one planning call). Select a bounded subset with `--ids 1,5,12`.
 
-Reference verification executed all twenty trusted read-only SQL queries and compared each with separately implemented Python grouping, sets, Decimal arithmetic and observation-order scans: **20/20 reference checks passed**. This is **not a live Groq accuracy score**. Live status is reported by the evaluation command, not stored as an answer in this catalog.
+Reference verification executed all twenty trusted read-only SQL queries and compared each with separately implemented Python grouping, sets, Decimal arithmetic and observation-order scans: **20/20 reference checks passed**. This is **not a live Gemini accuracy score**. Live status is reported by the evaluation command, not stored as an answer in this catalog.
 
 The scorer accepts documented semantic column aliases, equivalent portfolio-pair IDs or names, equal-score overlap tie order and reordered columns, and validates any recognized optional audit fields. Requested numerical measures, full row sets, duplicate counts and requested ranking must match. Numeric tolerance is absolute 1e-6 / relative 1e-10; it does not intentionally hide meaningful small differences. Explicitly labeled percent/fraction conversions are normalized. Qualitative explanations are recorded for human review rather than graded by another model.
 
@@ -451,6 +451,6 @@ SELECT p.portfolio_name,SUM(CASE WHEN s.asset_type='Stock' THEN 1 ELSE 0 END) AS
 
 ## Separate robustness checks
 
-`tests/test_robustness_refinement.py` uses explicitly mocked planning to exercise nonexistent/ambiguous/misspelled names, future personal advice, missing performance, instruction injection, Groq outage/missing key, graph fallback, empty results and zero denominator. These are safety/integration mechanics, not live AI accuracy.
+`tests/test_robustness_refinement.py` uses explicitly mocked planning to exercise nonexistent/ambiguous/misspelled names, future personal advice, missing performance, instruction injection, Gemini outage/missing key, graph fallback, empty results and zero denominator. These are safety/integration mechanics, not live AI accuracy.
 
 Q1 uses different stock-only denominators and an alphabetical winning-sector tie break. Q5 retains all thirteen portfolios while identifying the top five. Q11 preserves separately labeled best/worst membership even if sets overlap. Q12 starts its interval before the first decline and counts observations, not calendar days. Q14 aligns both ID and date. Q16 separates signed and absolute-magnitude changes of negative VaR. Q20 keeps all three predicates and its verified empty result.

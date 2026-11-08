@@ -884,7 +884,7 @@ def verify_references(data_root: Path, db_path: Path) -> dict:
             }
         )
     return {
-        "mode": "reference-only; no agent or Groq calls",
+        "mode": "reference-only; no agent or Gemini calls",
         "total": len(cases),
         "passed": sum(item["status"] == "pass" for item in items),
         "questions": items,
@@ -933,7 +933,7 @@ def evaluate_challenges(
     """Run at most twenty real questions; never conflate unavailable with passing."""
     if live and (getattr(agent, "live", False) is not True or not agent.settings.api_key):
         raise ConfigurationError(
-            f"Live challenges require a real {getattr(agent.settings, 'provider', 'groq').title()} agent and configured API key."
+            f"Live challenges require a real {getattr(agent.settings, 'provider', 'gemini').title()} agent and configured API key."
         )
     root = Path(root or agent.settings.data_root)
     selected = _selected_ids(ids, max_questions)
@@ -943,7 +943,7 @@ def evaluate_challenges(
     started = time.perf_counter()
     items = []
     provider_error = re.compile(
-        r"groq|gemini|billing|rate.?limit|timed?\s*out|network|connection failed|authentication|api.?key", re.I
+        r"gemini|gemini|billing|rate.?limit|timed?\s*out|network|connection failed|authentication|api.?key", re.I
     )
     for case in cases:
         item = {key: case[key] for key in ("id", "category", "question", "assumptions")}
@@ -1021,7 +1021,7 @@ def evaluate_challenges(
     counts = {status: sum(item["status"] == status for item in items) for status in STATUSES}
     result = {
         "suite": "advanced challenges; not official ground truth",
-        "mode": f"live {getattr(agent.settings, 'provider', 'groq').title()} agent" if live else "offline test (mocked)",
+        "mode": f"live {getattr(agent.settings, 'provider', 'gemini').title()} agent" if live else "offline test (mocked)",
         "timestamp_utc": datetime.now(UTC).isoformat(),
         "model": agent.settings.model,
         "total": len(cases),

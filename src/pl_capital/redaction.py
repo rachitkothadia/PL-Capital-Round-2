@@ -8,7 +8,6 @@ CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
 PRIVATE_FIELDS = frozenset(
     {
         "api_key",
-        "groq_api_key",
         "gemini_api_key",
         "google_api_key",
         "authorization",

@@ -10,7 +10,7 @@ class ReplyAgent:
     def __init__(self, tmp_path, answer=None):
         self.settings = SimpleNamespace(
             cache_dir=tmp_path / "cache", config_dir=tmp_path / "config",
-            model="openai/gpt-oss-120b", data_root=tmp_path,
+            model="gemini-2.5-pro", data_root=tmp_path,
         )
         self.graph = SimpleNamespace(status=lambda: {"backend": "sqlite", "reason": "offline UI fixture"})
         self.answer = answer or Answer(
@@ -86,14 +86,14 @@ async def test_new_answer_starts_collapsed_after_previous_trace_was_opened(tmp_p
 async def test_failure_outcome_is_anchored_and_not_a_fake_result(tmp_path):
     from pl_capital.tui.app import CapitalApp
 
-    app = CapitalApp(ReplyAgent(tmp_path, Answer(error="Groq unavailable; retry later.")))
+    app = CapitalApp(ReplyAgent(tmp_path, Answer(error="Gemini unavailable; retry later.")))
     async with app.run_test(size=(80, 24)) as pilot:
         await ask(app, pilot)
         headline = app.query_one(".answer-headline")
         viewport = app.query_one("#timeline").content_region
         assert viewport.y <= headline.region.y < viewport.bottom
         rendered = " ".join(str(widget.render()) for widget in app.query("Static"))
-        assert "Groq unavailable" in rendered
+        assert "Gemini unavailable" in rendered
         assert not app.query(".result-table")
         assert app.query_one(".execution-trace").collapsed
 

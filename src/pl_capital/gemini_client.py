@@ -68,6 +68,8 @@ class GeminiPlanner:
                 "thinkingConfig": {"thinkingBudget": 2048, "includeThoughts": False},
             },
         }
+        if self.model.startswith("gemini-3") :
+            body["generationConfig"].pop("thinkingConfig", None)
         for attempt in range(3):
             try:
                 with self.client.stream(

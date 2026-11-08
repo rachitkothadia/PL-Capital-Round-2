@@ -15,7 +15,7 @@ from pl_capital.errors import QueryError
 def validate_audit_projection(sql: str, *, question: str = "") -> None:
     """General ratio display policy, separate from the SQL security boundary.
 
-    The agent must ask Groq to repair a deficient plan; this never rewrites SQL
+    The agent must ask Gemini to repair a deficient plan; this never rewrites SQL
     or supplies known assessment answers. Ratios expose their denominators.
     Percentage tables use the documented default rounding and ranking.
     """

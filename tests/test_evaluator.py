@@ -156,7 +156,7 @@ def test_live_mode_cannot_label_mock_as_real(settings):
     from pl_capital.errors import ConfigurationError
     from pl_capital.evaluator import evaluate
 
-    with pytest.raises(ConfigurationError, match="real Groq"):
+    with pytest.raises(ConfigurationError, match="real Gemini"):
         evaluate(OracleTestAgent(settings))
 
 

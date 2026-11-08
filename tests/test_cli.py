@@ -10,7 +10,7 @@ def test_doctor_and_initialization_are_key_safe(settings, monkeypatch, capsys):
     monkeypatch.setenv("PL_CAPITAL_DATA_DIR", str(settings.data_root))
     monkeypatch.setenv("PL_CAPITAL_CACHE_DIR", str(settings.cache_dir))
     monkeypatch.setenv("GRAPH_BACKEND", "off")
-    monkeypatch.setenv("GROQ_API_KEY", "test-private-value")
+    monkeypatch.setenv("GEMINI_API_KEY", "test-private-value")
     assert main(["doctor", "--json"]) == 0
     text = capsys.readouterr().out
     assert "test-private-value" not in text
@@ -25,14 +25,14 @@ def test_json_ask_uses_agent_and_nonzero_on_error(monkeypatch, capsys):
         def __init__(self, settings):
             self.settings = settings
         def answer_question(self, question):
-            return Answer(intent="sql_query", tool="sql_query", result={"columns": ["count"], "rows": [[13]]}) if question == "count" else Answer(error="Groq unavailable")
+            return Answer(intent="sql_query", tool="sql_query", result={"columns": ["count"], "rows": [[13]]}) if question == "count" else Answer(error="Gemini unavailable")
         def close(self):
             pass
     monkeypatch.setattr(cli, "PortfolioAgent", Stub)
     assert cli.main(["ask", "count", "--json"]) == 0
     assert json.loads(capsys.readouterr().out)["result"]["rows"] == [[13]]
     assert cli.main(["ask", "fail", "--json"]) == 1
-    assert json.loads(capsys.readouterr().out)["error"] == "Groq unavailable"
+    assert json.loads(capsys.readouterr().out)["error"] == "Gemini unavailable"
 
 
 def test_eval_requires_explicit_live(monkeypatch, capsys):
@@ -66,9 +66,9 @@ def test_model_switch_before_or_after_command(monkeypatch, capsys):
             calls.append("closed")
 
     monkeypatch.setattr(cli, "PortfolioAgent", Stub)
-    assert cli.main(["--model", "openai/gpt-oss-20b", "ask", "count", "--json"]) == 0
-    assert cli.main(["ask", "count", "--model", "openai/gpt-oss-20b", "--json"]) == 0
-    assert calls == ["openai/gpt-oss-20b", "closed", "openai/gpt-oss-20b", "closed"]
+    assert cli.main(["--model", "gemini-2.5-flash", "ask", "count", "--json"]) == 0
+    assert cli.main(["ask", "count", "--model", "gemini-2.5-flash", "--json"]) == 0
+    assert calls == ["gemini-2.5-flash", "closed", "gemini-2.5-flash", "closed"]
     capsys.readouterr()
 
 
@@ -77,7 +77,7 @@ def test_challenge_references_never_construct_an_agent(settings, monkeypatch, ca
 
     monkeypatch.setenv("PL_CAPITAL_DATA_DIR", str(settings.data_root))
     monkeypatch.setenv("PL_CAPITAL_CACHE_DIR", str(settings.cache_dir))
-    monkeypatch.setenv("GROQ_API_KEY", "")
+    monkeypatch.setenv("GEMINI_API_KEY", "")
     def forbidden(_):
         raise AssertionError("Reference mode must not construct a model client")
     monkeypatch.setattr(cli, "PortfolioAgent", forbidden)
@@ -108,7 +108,7 @@ def test_json_errors_do_not_expose_private_key(monkeypatch, capsys):
     from pl_capital import cli
     from pl_capital.errors import ConfigurationError
 
-    monkeypatch.setenv("GROQ_API_KEY", "a-private-fixture-key")
+    monkeypatch.setenv("GEMINI_API_KEY", "a-private-fixture-key")
 
     def fail(_):
         raise ConfigurationError("API request failed safely.")

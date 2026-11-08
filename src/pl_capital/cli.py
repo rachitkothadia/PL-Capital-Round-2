@@ -24,7 +24,7 @@ from pl_capital.graph import GraphContext
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Auditable portfolio analytics over a historical snapshot.")
     parser.add_argument("--version", action="version", version=f"pl-capital {__version__}")
-    parser.add_argument("--model", choices=MODELS, dest="root_model", help="Planner model (selects Groq or Gemini)")
+    parser.add_argument("--model", choices=MODELS, dest="root_model", help="Gemini planner model")
     commands = parser.add_subparsers(dest="command")
     ask = commands.add_parser("ask", help="Ask the real model-backed portfolio agent")
     ask.add_argument("question")
@@ -47,7 +47,7 @@ def _parser() -> argparse.ArgumentParser:
     evaluation.add_argument("--model", choices=MODELS)
     challenges = commands.add_parser("challenges", help="Check twenty additional challenges separately from official ground truth")
     mode = challenges.add_mutually_exclusive_group(required=True)
-    mode.add_argument("--references", action="store_true", help="Compare SQL references with independent Python, without Groq")
+    mode.add_argument("--references", action="store_true", help="Compare SQL references with independent Python, without Gemini")
     mode.add_argument("--live", action="store_true", help="Run the real agent, with at most twenty questions")
     challenges.add_argument("--ids", help="Comma-separated distinct question IDs, 1 through 20")
     challenges.add_argument("--limit", type=int, choices=range(21), default=20)
@@ -102,7 +102,7 @@ def _graph_status(settings: Settings) -> dict:
 def _doctor(settings: Settings) -> dict:
     initialize(settings.data_root, settings.db_path)
     versions = {}
-    for package in ("groq", "httpx", "textual", "sqlglot", "pydantic", "falkordblite"):
+    for package in ("httpx", "textual", "sqlglot", "pydantic", "falkordblite"):
         try:
             versions[package] = importlib.metadata.version(package)
         except importlib.metadata.PackageNotFoundError:
@@ -112,9 +112,7 @@ def _doctor(settings: Settings) -> dict:
         "platform": platform.system(), "architecture": platform.machine(),
         "provider": settings.provider, "model": settings.model,
         "api_key": "SET" if settings.api_key else "NOT SET",
-        "groq_api_key": ("SET" if settings.api_key else "NOT SET") if settings.provider == "groq" else "NOT ACTIVE",
-        "gemini_api_key": ("SET" if settings.api_key else "NOT SET") if settings.provider == "gemini" else "NOT ACTIVE",
-        "groq_model": settings.model if settings.provider == "groq" else None, "ready_for_live_agent": bool(settings.api_key),
+        "ready_for_live_agent": bool(settings.api_key),
         "dependencies": versions, "dataset": diagnostics(settings.db_path),
         "graph": _graph_status(settings),
         "notes": ["No API request is made by doctor; readiness indicates configuration only, not live quota or billing availability.", "SQLite is authoritative; optional graph failure does not block analytics."],

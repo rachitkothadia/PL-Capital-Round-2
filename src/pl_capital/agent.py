@@ -11,7 +11,6 @@ from pl_capital.errors import CapitalError, EntityError, PlanningError, QueryErr
 from pl_capital.exposure import calculate, resolve_portfolio
 from pl_capital.gemini_client import GeminiPlanner
 from pl_capital.graph import GraphContext
-from pl_capital.groq_client import GroqPlanner
 from pl_capital.models import Answer, TraceEvent
 from pl_capital.redaction import clean_text
 from pl_capital.sql_safety import validate, validate_audit_projection
@@ -23,7 +22,7 @@ from pl_capital.verification import (
 )
 
 INJECTION = re.compile(
-    r"ignore\s+(?:all\s+)?(?:previous|prior|system)|GROQ_API_KEY|GEMINI_API_KEY|GOOGLE_API_KEY|gsk_[A-Za-z0-9]+|AIza[A-Za-z0-9_-]{20,}|AQ\.[A-Za-z0-9_-]{20,}|"
+    r"ignore\s+(?:all\s+)?(?:previous|prior|system)|GEMINI_API_KEY|GEMINI_API_KEY|GOOGLE_API_KEY|gsk_[A-Za-z0-9]+|AIza[A-Za-z0-9_-]{20,}|AQ\.[A-Za-z0-9_-]{20,}|"
     r"(?:reveal|print|show|read)\s+(?:the\s+)?(?:secrets?|password|api.?key|\.env)|"
     r"/etc/|load_extension|readfile|\b(?:drop|delete|update|alter|attach|detach)\s+(?:table|from|database)|"
     r"(?:run|execute)\s+(?:a\s+)?(?:shell|bash|python|command)",
@@ -51,19 +50,10 @@ class PortfolioAgent:
 
     def set_model(self, model: str):
         if model not in MODELS:
-            raise PlanningError("Choose a documented Groq or Gemini model.")
-        target = replace(self.settings, model=model)
-        if self.live and target.provider != self.settings.provider:
-            key = Settings.from_env(model=model).api_key
-            if not key:
-                raise PlanningError(f"Configure {target.provider.upper()}_API_KEY before switching provider.")
-            target = replace(target, api_key=key)
-            if self._planner is not None:
-                self._planner.close()
-                self._planner = None
-        elif self._planner is not None:
+            raise PlanningError("Choose a documented Gemini model.")
+        if self._planner is not None:
             self._planner.set_model(model)
-        self.settings = target
+        self.settings = replace(self.settings, model=model)
 
     def _context(self, question: str) -> dict:
         retrieved = self.graph.retrieve(question)
@@ -163,7 +153,7 @@ class PortfolioAgent:
             if not retrieved["used"] and retrieved.get("attempted"):
                 answer.warnings.append(retrieved.get("reason", "Graph unavailable; SQLite used."))
             if self._planner is None:
-                self._planner = (GeminiPlanner if self.settings.provider == "gemini" else GroqPlanner)(self.settings)
+                self._planner = GeminiPlanner(self.settings)
             event(
                 "planning",
                 f"Requesting typed intent and SQL plan from {self.settings.provider}."
