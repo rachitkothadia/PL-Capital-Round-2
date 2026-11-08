@@ -1,3 +1,4 @@
+import asyncio
 from types import SimpleNamespace
 
 import pytest
@@ -104,15 +105,20 @@ async def test_composer_grows_with_content_then_shrinks_after_submit(tmp_path):
     app = CapitalApp(ReplyAgent(tmp_path))
     async with app.run_test(size=(80, 24)) as pilot:
         composer = app.query_one("#composer")
-        assert composer.region.height == 3
+        async def wait_for_height(expected):
+            # TextArea and resize/layout messages span multiple event cycles on
+            # slow runners. Assert the settled state with a bounded deadline.
+            deadline = asyncio.get_running_loop().time() + 5
+            while composer.region.height != expected and asyncio.get_running_loop().time() < deadline:
+                await pilot.pause(.01)
+            assert composer.region.height == expected
+        await wait_for_height(3)
         composer.text = "first\nsecond\nthird"
-        await pilot.pause()
-        assert composer.region.height == 5
+        await wait_for_height(5)
         composer.text = "\n".join(["a line"] * 12)
-        await pilot.pause()
-        assert composer.region.height == 7
+        await wait_for_height(7)
         await ask(app, pilot)
-        assert composer.region.height == 3
+        await wait_for_height(3)
         assert composer.placeholder
 
 
