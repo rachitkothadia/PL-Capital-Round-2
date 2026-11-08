@@ -225,3 +225,138 @@ def test_fractional_equity_weight_aliases_convert_once_and_keep_denominators_req
     for row in actual["rows"]:
         row.pop(index)
     assert compare_challenge(case, actual, expected)[0] == "fail"
+
+
+def test_is_current_match_alias_validates_the_flag_instead_of_ignoring_it(settings, references):
+    case = load_questions(settings.data_root)[10]
+    expected = references[11]
+    actual = copy.deepcopy(expected)
+    index = actual["columns"].index("last_close_matches_current")
+    actual["columns"][index] = "is_current_match"
+    assert compare_challenge(case, actual, expected)[0] == "pass"
+    actual["rows"][0][index] = 1 - actual["rows"][0][index]
+    assert compare_challenge(case, actual, expected)[0] == "fail"
+
+
+@pytest.fixture
+def tall_risk_case(settings):
+    # Create genuine High/Low overlap so tests cannot pass merely because source results are empty.
+    with sqlite3.connect(settings.db_path) as conn:
+        conn.execute("UPDATE portfolios SET target_risk_level='Low' WHERE portfolio_id=1")
+        cursor = conn.execute("""WITH groups AS (
+            SELECT s.symbol,p.target_risk_level,COUNT(DISTINCT h.portfolio_id) AS distinct_portfolios,
+                SUM(h.quantity) AS total_quantity,SUM(h.quantity*s.current_price) AS total_market_value
+            FROM holdings h JOIN securities s USING(security_id) JOIN portfolios p USING(portfolio_id)
+            WHERE s.asset_type='Stock' AND p.target_risk_level IN ('High','Low')
+            GROUP BY s.symbol,p.target_risk_level), overlap AS (
+            SELECT symbol FROM groups GROUP BY symbol HAVING COUNT(*)=2)
+            SELECT g.* FROM groups g JOIN overlap USING(symbol) ORDER BY g.symbol,g.target_risk_level""")
+        actual = {
+            "columns": [item[0] for item in cursor.description],
+            "rows": [list(row) for row in cursor],
+            "truncated": False,
+        }
+    actual["row_count"] = len(actual["rows"])
+    expected = reference_results(settings.data_root, settings.db_path, ids=[8])[8]
+    assert expected["rows"] and actual["rows"]
+    assert verify_references(settings.data_root, settings.db_path)["passed"] == 20
+    return load_questions(settings.data_root)[7], actual, expected
+
+
+def test_complete_tall_risk_layout_matches_independent_wide_reference(tall_risk_case):
+    case, actual, expected = tall_risk_case
+    assert compare_challenge(case, actual, expected)[0] == "pass"
+    actual["rows"].reverse()
+    assert compare_challenge(case, actual, expected)[0] == "pass"
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "wrong_value",
+        "wrong_unit",
+        "missing_group",
+        "duplicate_group",
+        "unknown_risk",
+        "missing_symbol_pair",
+    ],
+)
+def test_tall_risk_layout_rejects_wrong_or_incomplete_measures(tall_risk_case, mutation):
+    case, actual, expected = tall_risk_case
+    if mutation == "wrong_value":
+        actual["rows"][0][2] += 1
+    elif mutation == "wrong_unit":
+        actual["rows"][0][4] /= 100
+    elif mutation == "missing_group":
+        actual["rows"].pop()
+    elif mutation == "duplicate_group":
+        actual["rows"].append(actual["rows"][0][:])
+    elif mutation == "unknown_risk":
+        actual["rows"][0][1] = "Moderate"
+    else:
+        actual["rows"] = actual["rows"][2:]
+    actual["row_count"] = len(actual["rows"])
+    assert compare_challenge(case, actual, expected)[0] == "fail"
+
+
+def test_tall_risk_layout_does_not_ignore_extras_or_missing_columns(tall_risk_case):
+    case, actual, expected = tall_risk_case
+    unknown = copy.deepcopy(actual)
+    unknown["columns"].append("unverified_metadata")
+    for row in unknown["rows"]:
+        row.append("anything")
+    assert compare_challenge(case, unknown, expected)[0] == "inconclusive"
+    actual["columns"].pop()
+    for row in actual["rows"]:
+        row.pop()
+    assert compare_challenge(case, actual, expected)[0] == "fail"
+
+
+def test_tall_risk_optional_company_metadata_is_checked_for_both_groups_and_source(tall_risk_case):
+    case, actual, expected = tall_risk_case
+    names = {
+        row[expected["columns"].index("symbol")]: row[expected["columns"].index("company_name")]
+        for row in expected["rows"]
+    }
+    actual["columns"].append("company_name")
+    for row in actual["rows"]:
+        row.append(names[row[0]])
+    assert compare_challenge(case, actual, expected)[0] == "pass"
+    wrong_group = copy.deepcopy(actual)
+    wrong_group["rows"][0][-1] = "Wrong group company"
+    assert compare_challenge(case, wrong_group, expected)[0] == "fail"
+    for row in actual["rows"]:
+        row[-1] = "Consistent but wrong company"
+    assert compare_challenge(case, actual, expected)[0] == "fail"
+
+
+def test_tall_empty_risk_layout_only_passes_when_complete_schema_and_population_match(
+    settings, references
+):
+    case = load_questions(settings.data_root)[7]
+    actual = {
+        "columns": [
+            "symbol",
+            "target_risk_level",
+            "distinct_portfolios",
+            "total_quantity",
+            "total_market_value",
+        ],
+        "rows": [],
+        "row_count": 0,
+    }
+    assert references[8]["rows"] == []
+    assert compare_challenge(case, actual, references[8])[0] == "pass"
+    actual["columns"].append("unknown_extra")
+    assert compare_challenge(case, actual, references[8])[0] == "inconclusive"
+
+
+def test_reported_aum_alias_preserves_value_checks(settings, references):
+    case = load_questions(settings.data_root)[4]
+    expected = references[5]
+    actual = copy.deepcopy(expected)
+    index = actual['columns'].index('total_aum')
+    actual['columns'][index] = 'reported_aum'
+    assert compare_challenge(case, actual, expected)[0] == 'pass'
+    actual['rows'][0][index] += 1
+    assert compare_challenge(case, actual, expected)[0] == 'fail'

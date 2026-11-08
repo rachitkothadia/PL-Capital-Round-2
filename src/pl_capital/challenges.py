@@ -632,7 +632,7 @@ ALIASES = {
     "recorded_weight_sum": "weight_sum recorded_sum total_weight recorded_total total_recorded_weight sum_current_weight",
     "discrepancy_pp": "weight_discrepancy_pp difference_pp signed_gap_pp signed_discrepancy_pp discrepancy_percentage_points",
     "has_bonds": "holds_bonds holds_bond bond_present has_bond_holdings",
-    "total_aum": "aum recorded_aum",
+    "total_aum": "aum recorded_aum reported_aum",
     "holdings_market_value": "holdings_value total_holdings_value listed_holdings_value market_value total_market_value",
     "difference": "aum_minus_holdings aum_gap dollar_difference aum_difference mismatch holdings_minus_aum",
     "holdings_to_aum_ratio": "coverage_ratio holdings_aum_ratio holdings_to_aum aum_ratio aum_to_holdings_ratio",
@@ -728,7 +728,7 @@ for _field, _aliases in {
     "aum_coverage_pct": "percentage_of_aum",
     "abs_discrepancy_pp": "abs_percentage_point_diff",
     "equity_value_fraction": "fraction fraction_of_total",
-    "last_close_matches_current": "matches_current price_match",
+    "last_close_matches_current": "matches_current price_match is_current_match",
     "longest_decline_streak": "max_len",
     "intraday_range_pct": "percentage",
     "observation_count": "obs_count",
@@ -863,6 +863,77 @@ def _unit(value, canonical: str, actual_label: str):
     return value
 
 
+def _pivot_risk_groups(columns: list, rows: list) -> dict | tuple[str, str]:
+    """Losslessly normalize case 8's explicitly defined High/Low tall representation."""
+    required = {
+        "symbol",
+        "target_risk_level",
+        "distinct_portfolios",
+        "total_quantity",
+        "total_market_value",
+    }
+    allowed = required | {"company_name"}
+    mapping = {}
+    for index, name in enumerate(columns):
+        candidates = [field for field in allowed if _label(name) == _label(field)]
+        if len(candidates) != 1 or candidates[0] in mapping:
+            return (
+                "inconclusive",
+                "Tall risk layout has an unknown or duplicate column; no extras are ignored.",
+            )
+        mapping[candidates[0]] = index
+    missing = required - set(mapping)
+    if missing:
+        return "fail", "Tall risk layout is missing required columns: " + ", ".join(
+            sorted(missing)
+        ) + "."
+    groups = {}
+    symbols = {}
+    metadata = {}
+    for row in rows:
+        symbol, risk = row[mapping["symbol"]], row[mapping["target_risk_level"]]
+        if not isinstance(symbol, str) or not symbol.strip():
+            return "fail", "Tall risk layout contains an invalid security symbol."
+        if not isinstance(risk, str) or risk.strip().casefold() not in {"high", "low"}:
+            return (
+                "fail",
+                "Tall risk layout must contain only the requested High and Low risk groups.",
+            )
+        key, level = symbol.strip().casefold(), risk.strip().casefold()
+        pair = groups.setdefault(key, {})
+        if level in pair:
+            return "fail", "Tall risk layout duplicates a symbol/risk-group row."
+        pair[level] = row
+        symbols[key] = symbol
+        if "company_name" in mapping:
+            value = row[mapping["company_name"]]
+            if key in metadata and not _equivalent(metadata[key], value):
+                return "fail", "Tall risk layout disagrees on company metadata between risk groups."
+            metadata[key] = value
+    output = [
+        "symbol",
+        "high_portfolio_count",
+        "low_portfolio_count",
+        "high_quantity",
+        "low_quantity",
+        "high_market_value",
+        "low_market_value",
+    ]
+    if "company_name" in mapping:
+        output.append("company_name")
+    pivoted = []
+    for key, pair in groups.items():
+        if set(pair) != {"high", "low"}:
+            return "fail", "Every tall-layout symbol must have exactly one High and one Low group."
+        values = [symbols[key]]
+        for field in ("distinct_portfolios", "total_quantity", "total_market_value"):
+            values.extend(pair[level][mapping[field]] for level in ("high", "low"))
+        if "company_name" in mapping:
+            values.append(metadata[key])
+        pivoted.append(values)
+    return {"columns": output, "rows": pivoted}
+
+
 def compare_challenge(case: dict, actual: dict, expected: dict) -> tuple[str, str]:
     """Compare known semantic columns; unfamiliar shapes require human review."""
     if actual.get("truncated"):
@@ -877,6 +948,11 @@ def compare_challenge(case: dict, actual: dict, expected: dict) -> tuple[str, st
         return "inconclusive", "Agent result has an unknown or malformed row/column shape."
     if actual.get("row_count") != len(rows):
         return "fail", "Declared row count differs from actual returned rows."
+    if case["id"] == 8 and any(_label(name) == "targetrisklevel" for name in columns):
+        pivoted = _pivot_risk_groups(columns, rows)
+        if isinstance(pivoted, tuple):
+            return pivoted
+        columns, rows = pivoted["columns"], pivoted["rows"]
     optional = expected.get("optional_columns", {})
     if not isinstance(optional, dict) or any(
         name in expected["columns"]
