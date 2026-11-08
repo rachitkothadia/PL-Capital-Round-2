@@ -8,7 +8,7 @@ From the configured checkout: `uv run pl-capital challenges --references` checks
 
 Reference verification executed all twenty trusted read-only SQL queries and compared each with separately implemented Python grouping, sets, Decimal arithmetic and observation-order scans: **20/20 reference checks passed**. This is **not a live Groq accuracy score**. Live status is reported by the evaluation command, not stored as an answer in this catalog.
 
-The scorer accepts documented semantic column aliases and reordered columns, and validates any recognized optional audit fields. Requested numerical measures, full row sets, duplicate counts and requested ranking must match. Numeric tolerance is absolute 1e-6 / relative 1e-10; it does not intentionally hide meaningful small differences. Explicitly labeled percent/fraction conversions are normalized. Qualitative explanations are recorded for human review rather than graded by another model.
+The scorer accepts documented semantic column aliases, equivalent portfolio-pair IDs or names, equal-score overlap tie order and reordered columns, and validates any recognized optional audit fields. Requested numerical measures, full row sets, duplicate counts and requested ranking must match. Numeric tolerance is absolute 1e-6 / relative 1e-10; it does not intentionally hide meaningful small differences. Explicitly labeled percent/fraction conversions are normalized. Qualitative explanations are recorded for human review rather than graded by another model.
 
 - `pass`: independently verified tabular result.
 - `fail`: known wrong values, missing measures, incomplete result, query error or incorrect required ranking.
@@ -142,10 +142,12 @@ Assumptions:
 - Signed discrepancy, when included, is market-value percent minus recorded-equity percent; sort absolute gap descending then portfolio/symbol.
 - Undefined/nonpositive denominators are not treated as zero discrepancies.
 
+- Rank ties within floating-point noise use the absolute gap rounded to ten decimals, then portfolio and symbol; returned values retain full precision.
+
 Reference SQL (also stored in the [machine-readable catalog](../tests/challenges/advanced_questions.json)):
 
 ```sql
-WITH e AS (SELECT p.portfolio_id,p.portfolio_name,s.symbol,s.company_name,h.current_weight,h.quantity*s.current_price AS holding_market_value FROM holdings h JOIN portfolios p USING(portfolio_id) JOIN securities s USING(security_id) WHERE s.asset_type='Stock'), t AS (SELECT portfolio_id,SUM(current_weight) AS equity_weight_total,SUM(holding_market_value) AS equity_market_value FROM e GROUP BY portfolio_id), r AS (SELECT e.*,t.equity_weight_total,t.equity_market_value,100.0*e.current_weight/t.equity_weight_total AS recorded_equity_pct,100.0*e.holding_market_value/t.equity_market_value AS market_value_pct FROM e JOIN t USING(portfolio_id) WHERE t.equity_weight_total>0 AND t.equity_market_value>0) SELECT portfolio_name,symbol,company_name,equity_weight_total,equity_market_value,current_weight,holding_market_value,recorded_equity_pct,market_value_pct,market_value_pct-recorded_equity_pct AS discrepancy_pp,ABS(market_value_pct-recorded_equity_pct) AS abs_discrepancy_pp FROM r ORDER BY abs_discrepancy_pp DESC,portfolio_name,symbol LIMIT 10
+WITH e AS (SELECT p.portfolio_id,p.portfolio_name,s.symbol,s.company_name,h.current_weight,h.quantity*s.current_price AS holding_market_value FROM holdings h JOIN portfolios p USING(portfolio_id) JOIN securities s USING(security_id) WHERE s.asset_type='Stock'), t AS (SELECT portfolio_id,SUM(current_weight) AS equity_weight_total,SUM(holding_market_value) AS equity_market_value FROM e GROUP BY portfolio_id), r AS (SELECT e.*,t.equity_weight_total,t.equity_market_value,100.0*e.current_weight/t.equity_weight_total AS recorded_equity_pct,100.0*e.holding_market_value/t.equity_market_value AS market_value_pct FROM e JOIN t USING(portfolio_id) WHERE t.equity_weight_total>0 AND t.equity_market_value>0) SELECT portfolio_name,symbol,company_name,equity_weight_total,equity_market_value,current_weight,holding_market_value,recorded_equity_pct,market_value_pct,market_value_pct-recorded_equity_pct AS discrepancy_pp,ABS(market_value_pct-recorded_equity_pct) AS abs_discrepancy_pp FROM r ORDER BY ROUND(abs_discrepancy_pp,10) DESC,portfolio_name,symbol LIMIT 10
 ```
 
 ## 7. portfolio overlap graph
