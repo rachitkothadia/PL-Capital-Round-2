@@ -163,3 +163,20 @@ Keep the longest island's own start/end dates, with earliest-start tie breaking.
 Do not combine MAX(length), MIN(start) and MAX(end) from different islands. A streak
 starts at the previous observation date of its first decline, not that decline's date.
 """
+
+SYSTEM_PROMPT += """
+SQL AUDIT PRECISION:
+Use aum_minus_holdings = total_aum - holdings_market_value (positive means AUM
+exceeds listed holdings), holdings_to_aum_ratio = holdings_market_value/total_aum,
+aum_coverage_pct = 100*holdings_to_aum_ratio. Name the signed orientation explicitly.
+In holding-share comparisons, equity_market_value means the PORTFOLIO'S TOTAL stock
+market value, not this holding's value; use holding_market_value for the latter.
+An observed decline island can be computed in separate CTEs as follows:
+1. LAG(close_price) AS prev_close and LAG(price_date) AS prev_date per security.
+2. is_break = CASE WHEN prev_close IS NULL OR close_price >= prev_close THEN 1 ELSE 0 END.
+3. island_id = SUM(is_break) OVER (PARTITION BY security_id ORDER BY price_date ROWS UNBOUNDED PRECEDING).
+4. Keep close_price < prev_close; group by security_id,island_id, COUNT(*) transitions,
+   MIN(prev_date) start_date, MAX(price_date) end_date. Do not use row_number-minus-breaks.
+5. Rank islands per security by transition count DESC,start_date ASC; then filter the
+   requested minimum transitions. The first nondeclining observation anchors its island.
+"""

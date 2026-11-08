@@ -238,8 +238,9 @@ def test_provider_failure_categories_are_precise_and_safe(
     settings, monkeypatch, status, category, label
 ):
     import httpx
-    from pl_capital.gemini_client import GeminiPlanner
+
     from pl_capital.errors import PlanningError
+    from pl_capital.gemini_client import GeminiPlanner
 
     monkeypatch.setattr("pl_capital.gemini_client.time.sleep", lambda _: None)
     client = httpx.Client(

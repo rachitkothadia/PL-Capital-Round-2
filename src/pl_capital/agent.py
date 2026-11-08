@@ -436,6 +436,9 @@ class PortfolioAgent:
                     "out_of_domain": "Ask a descriptive question about the supplied portfolio snapshot.",
                     "tool_error": "Check doctor and the recorded validation error; retry after correcting the service or input issue.",
                 }.get(answer.status, "Review the request and retry.")
+                failure = getattr(self._planner, "last_failure", {})
+                if answer.status == "tool_error" and failure.get("category") == "rate_limit":
+                    answer.next_step = f"Wait at least {failure['retry_after_seconds']:g} seconds; check this Google project's quota if the limit persists."
             event(
                 "outcome",
                 "Canonical execution outcome.",
