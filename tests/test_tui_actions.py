@@ -2,6 +2,7 @@ import json
 
 import pytest
 from test_tui_refinement import ReplyAgent, ask
+from ui_test_helpers import settle_button
 
 from pl_capital.clipboard import ClipboardOutcome
 from pl_capital.models import Answer
@@ -24,10 +25,7 @@ async def activate(app, pilot, selector, method):
     # Expansion and feedback can invalidate geometry after a worker completes.
     await pilot.pause()
     button = app.query_one(selector)
-    button.focus(scroll_visible=False)
-    await pilot.pause()
-    button.scroll_visible(animate=False, immediate=True)
-    await pilot.pause()
+    await settle_button(pilot, button)
     if method == "mouse":
         assert await pilot.click(button, offset=(2, 1))
     else:

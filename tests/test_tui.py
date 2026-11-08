@@ -3,6 +3,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from ui_test_helpers import settle_button
 
 from pl_capital.models import Answer, TraceEvent
 
@@ -134,17 +135,13 @@ async def test_trace_keyboard_toggle_and_copy_sql_export(tmp_path, monkeypatch, 
         steps = " ".join(str(widget.render()) for widget in app.query(".explanation-step"))
         assert "read-only SELECT" in steps
         copy_button = app.query_one(".copy-sql", Button)
-        copy_button.focus(scroll_visible=False)
-        copy_button.scroll_visible(animate=False, immediate=True)
-        await pilot.pause()
+        await settle_button(pilot, copy_button)
         assert await pilot.click(copy_button, offset=(2, 1))
         await pilot.pause()
         await app.workers.wait_for_complete()
         assert copied == ["SELECT COUNT(*) FROM portfolios"]
         export_button = app.query_one(".export-answer", Button)
-        export_button.focus(scroll_visible=False)
-        export_button.scroll_visible(animate=False, immediate=True)
-        await pilot.pause()
+        await settle_button(pilot, export_button)
         assert await pilot.click(export_button, offset=(2, 1))
         await pilot.pause()
         await app.workers.wait_for_complete()
