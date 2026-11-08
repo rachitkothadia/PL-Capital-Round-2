@@ -1,0 +1,15 @@
+# Architecture and trust boundaries
+
+One `PortfolioAgent.answer_question()` serves CLI, TUI and evaluator. Presentation does not run financial arithmetic. The model only interprets questions, selects a typed tool and proposes SQL or a portfolio identifier. Financial values come from SQLite or Decimal arithmetic over SQLite holdings.
+
+Initialization is the only relational write path: source fingerprint → locked temporary database → supplied schema → typed CSV insertion → constraint/FK/integrity verification → closed handles → atomic replacement. Existing manifests and changed sources are checked explicitly. Normal questions cannot rebuild an existing database.
+
+Each SQL call independently validates a SQLite AST and opens its own read-only connection with authorizer, progress/step deadline, function/table restrictions and output budgets. Bindings are declared typed scalars. An invalid plan can trigger one bounded model correction. It is never executed as Python or shell. Audit projection checks enforce visible ratio denominators and documented percentage display conventions; these checks contain no reference answers.
+
+Graph ingestion accepts only trusted SQLite metadata and uses parameterized MERGE. Retrieval accepts text terms, not executable Cypher, and uses fixed read-only traversals. Graph outages preserve real SQLite metadata retrieval. Fingerprinted graph namespaces prevent changed snapshots from silently reusing old metadata. Native clients are lazy, optional and explicitly closed.
+
+Groq plans use required fields, forbidden extras and a strict JSON schema. Numeric SQL parameter values use JSON number rather than an overlapping integer/number union, which was rejected by the live API and corrected after diagnosis. Calls are nonstreaming, temperature zero, token/time bounded, with two SDK retries. Operational traces show real actions and tool evidence; private model reasoning is never requested for display.
+
+TUI analysis and evaluation run away from the UI event loop. A busy guard prevents conflicting concurrent questions and model/context changes. History, session list and timeline are bounded; there is no automatic transcript upload. SQL clipboard requests also create an owner-only local export, acknowledging terminal limitations.
+
+The independent evaluator calls the actual agent, then compares against separate SQL references and separately aggregated exposure references. Production planning never reads the ground-truth fixture. Equivalent aliases are allowed; extra/missing columns, rows and duplicate counts are not flattened away. Reports scrub credentials and are written atomically with private POSIX permissions where supported (Windows inherits parent-directory ACLs).
