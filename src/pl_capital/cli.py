@@ -308,7 +308,11 @@ def main(argv: list[str] | None = None) -> int:
                         word_wrap=True,
                     )
                 )
-            return 0
+            return int(
+                args.command == "graph"
+                and args.action in {"build", "rebuild"}
+                and not result.get("native_ready")
+            )
         if args.command == "scenario":
             from pl_capital.models import Answer
             from pl_capital.scenario import calculate_scenario

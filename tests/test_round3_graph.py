@@ -52,6 +52,7 @@ def test_fingerprint_tracks_sqlite_rows_not_only_import_manifest(settings):
 
 
 def test_rebuild_unavailable_does_not_delete_files(settings, monkeypatch):
+    monkeypatch.setattr(graph.sys, "platform", "linux")  # Exercise package failure independently of host support.
     marker = settings.cache_dir / "unrelated.rdb"
     marker.write_bytes(b"private unrelated user data")
     sqlite_bytes = settings.db_path.read_bytes()

@@ -121,3 +121,34 @@ def test_recorded_nav_lag_is_verified_independently(settings):
     current = next(i for i, r in enumerate(records) if r["performance_date"] == "2023-09-27")
     assert records[current - 1]["nav"] == result.rows[0][1]
     assert records[current]["nav"] == result.rows[0][2]
+
+
+def test_graph_commands_report_native_failure_and_close(settings, monkeypatch, capsys):
+    from pl_capital import cli
+
+    monkeypatch.setenv("PL_CAPITAL_DATA_DIR", str(settings.data_root))
+    monkeypatch.setenv("PL_CAPITAL_CACHE_DIR", str(settings.cache_dir))
+    events = []
+
+    class Graph:
+        def __init__(self, _settings):
+            pass
+
+        def health(self):
+            return {"native_ready": False, "backend": "sqlite", "reason": "unavailable"}
+
+        def build(self, *, rebuild=False):
+            events.append(rebuild)
+            return self.health()
+
+        def close(self):
+            events.append("closed")
+
+    monkeypatch.setattr(cli, "GraphContext", Graph)
+    assert cli.main(["graph", "build", "--json"]) == 1
+    assert not json.loads(capsys.readouterr().out)["native_ready"]
+    assert cli.main(["graph", "rebuild", "--json"]) == 1
+    capsys.readouterr()
+    assert cli.main(["doctor", "--graph", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["graph"]["backend"] == "sqlite"
+    assert events == [False, "closed", True, "closed", "closed"]
