@@ -136,6 +136,10 @@ def validate(sql: str, parameters: dict, schema: dict) -> tuple[str, list[str]]:
         if name in schema:
             tables.add(name)
     for func in tree.find_all(exp.Func):
+        # sqlglot models these SQL operators as Func subclasses. They do not
+        # invoke SQLite functions; their nested expressions are still checked.
+        if isinstance(func, exp.And | exp.Or | exp.Exists):
+            continue
         name = func.name.lower() if isinstance(func, exp.Anonymous) else func.sql_name().lower()
         if name not in SAFE_FUNCTIONS | {"cast", "case", "if", "extract", "ts_or_ds_to_date"}:
             raise QueryError(f"Function is not allowed: {name}.")
