@@ -29,6 +29,7 @@ packages = ["src/pl_capital"]
 "data" = "pl_capital/resources/data"
 "database_schema.sql" = "pl_capital/resources/database_schema.sql"
 "ground_truth_dataset.json" = "pl_capital/resources/ground_truth_dataset.json"
+"tests/challenges/advanced_questions.json" = "pl_capital/resources/advanced_questions.json"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

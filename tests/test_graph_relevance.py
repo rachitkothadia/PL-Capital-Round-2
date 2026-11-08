@@ -95,10 +95,14 @@ def test_known_company_in_nonanalytical_question_does_not_start_graph(graph_sett
     assert result["used"] is False
 
 
-def test_graph_without_entity_or_join_evidence_is_not_claimed_used(graph_settings):
+def test_graph_without_entity_or_join_evidence_is_not_claimed_used(graph_settings, monkeypatch):
     from types import SimpleNamespace
 
     from pl_capital.database import schema_context
+
+    # Exercise the injected graph's relevance behavior on every CI runner.
+    # The separate Windows test verifies the real platform fallback policy.
+    monkeypatch.setattr(sys, "platform", "linux")
 
     schema = schema_context(graph_settings.db_path)
 

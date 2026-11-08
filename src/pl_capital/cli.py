@@ -30,6 +30,7 @@ def _parser() -> argparse.ArgumentParser:
     ask.add_argument("question")
     ask.add_argument("--json", action="store_true", help="Return the typed answer as JSON")
     ask.add_argument("--trace", action="store_true", help="Show actual operational events")
+    ask.add_argument("--debug", action="store_true", help="Explicitly show redacted raw diagnostics")
     ask.add_argument("--model", choices=MODELS)
     init = commands.add_parser("init-db", help="Atomically initialize the supplied SQLite snapshot")
     init.add_argument("--rebuild", action="store_true", help="Explicitly replace a changed snapshot after validation")
@@ -44,6 +45,15 @@ def _parser() -> argparse.ArgumentParser:
     evaluation.add_argument("--report", type=Path, help="Write an auditable JSON evaluation report")
     evaluation.add_argument("--json", action="store_true")
     evaluation.add_argument("--model", choices=MODELS)
+    challenges = commands.add_parser("challenges", help="Check twenty additional challenges separately from official ground truth")
+    mode = challenges.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--references", action="store_true", help="Compare SQL references with independent Python, without Groq")
+    mode.add_argument("--live", action="store_true", help="Run the real agent, with at most twenty questions")
+    challenges.add_argument("--ids", help="Comma-separated distinct question IDs, 1 through 20")
+    challenges.add_argument("--limit", type=int, choices=range(21), default=20)
+    challenges.add_argument("--report", type=Path)
+    challenges.add_argument("--json", action="store_true")
+    challenges.add_argument("--model", choices=MODELS)
     return parser
 
 
@@ -109,46 +119,32 @@ def _doctor(settings: Settings) -> dict:
 
 
 def _render_answer(console: Console, answer, *, trace: bool, secret: str) -> None:
-    console.print("PL Capital · historical snapshot analytics", style="bold cyan", markup=False)
-    if answer.message or answer.error:
-        console.print(_text(answer.error or answer.message, secret), markup=False)
-    result = answer.result
-    if result.get("columns"):
+    from pl_capital.presentation import build_answer_view
+
+    view = build_answer_view(answer)
+    console.print(_text(view.headline, secret), style="bold cyan", markup=False)
+    if view.table:
         table = Table(show_header=True, header_style="bold cyan")
-        for column in result["columns"]:
-            table.add_column(_text(column, secret))
-        for row in result.get("rows", [])[:50]:
-            table.add_row(*[_text("NULL" if value is None else value, secret) for value in row])
+        for column in view.table.columns:
+            table.add_column(_text(column, secret), overflow="fold")
+        for row in view.table.rows:
+            table.add_row(*[_text(value, secret) for value in row])
         console.print(table)
-        if len(result.get("rows", [])) > 50:
-            console.print("Showing first 50 returned rows; --json contains the complete bounded result.", markup=False)
-        console.print(f"Returned rows: {result.get('row_count', len(result.get('rows', [])))} · {answer.elapsed_ms:.1f} ms", markup=False)
-    if "sectors" in result:
-        table = Table("Sector", "Whole portfolio (%)", "Equity normalized (%)", header_style="bold cyan")
-        for sector in result["sectors"]:
-            table.add_row(_text(sector["sector"], secret), f"{sector['whole_portfolio_pct']:.6f}",
-                          f"{sector['equity_normalized_pct']:.6f}")
-        console.print(table)
-        console.print(
-            f"Equity weight: {result['equity_weight_total']} · Bond weight: {result['bond_weight_total']} · "
-            f"All recorded weights: {result['all_recorded_weights_total']}\n"
-            f"{result['equity_holding_count']} stock holdings; {result['bond_exclusion_count']} bond holdings excluded.\n"
-            "Whole = sector stock weight × 100; normalized = sector stock weight / total stock weight × 100.", markup=False,
-        )
-    if answer.sql:
-        console.print("Executed SQL" if result.get("columns") else "Proposed SQL", style="bold", markup=False)
-        console.print(Syntax(_text(answer.sql, secret), "sql", word_wrap=True))
-        console.print("Bound parameters: " + json.dumps(_scrub(answer.parameters, secret)), markup=False)
-        if result.get("source_tables"):
-            console.print("Sources: " + ", ".join(result["source_tables"]), markup=False)
-    for warning in dict.fromkeys(answer.warnings):
+        if view.table.total_rows > len(view.table.rows):
+            console.print("Showing the first 8 returned rows; --json preserves the full bounded result.", markup=False)
+    console.print("How this was calculated", style="bold", markup=False)
+    for step in view.steps:
+        console.print("• " + _text(step, secret), markup=False)
+    console.print(_text(view.provenance, secret), style="dim", markup=False)
+    for warning in view.warnings:
         console.print("Note: " + _text(warning, secret), style="yellow", markup=False)
     if trace:
-        console.print("Execution trace · operational events only", style="bold cyan", markup=False)
-        for index, event in enumerate(answer.trace, 1):
-            console.print(_text(f"{index:02d}. {event.stage} · {event.elapsed_ms:.1f} ms · {event.detail}", secret), markup=False)
-            if event.data:
-                console.print(Syntax(json.dumps(_scrub(event.data, secret), indent=2), "json", word_wrap=True))
+        for section in view.sections:
+            console.print(_text(section.title, secret), style="bold cyan", markup=False)
+            for line in section.lines:
+                console.print(_text(line, secret), markup=False)
+            if section.code:
+                console.print(Syntax(_text(section.code, secret), section.language, word_wrap=True))
 
 
 def _render_evaluation(console: Console, result: dict) -> None:
@@ -193,6 +189,32 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 console.print(Syntax(json.dumps(_scrub(result, settings.api_key), indent=2), "json", word_wrap=True))
             return 0
+        if args.command == "challenges":
+            from pl_capital.challenges import _save, evaluate_challenges, verify_references
+            from pl_capital.errors import ConfigurationError
+
+            initialize(settings.data_root, settings.db_path)
+            if args.references:
+                result = verify_references(settings.data_root, settings.db_path)
+            else:
+                try:
+                    ids = [int(item.strip()) for item in args.ids.split(",")] if args.ids else None
+                except ValueError as exc:
+                    raise ConfigurationError("Use comma-separated question IDs from 1 through 20.") from exc
+                agent = PortfolioAgent(settings)
+                result = evaluate_challenges(agent, live=True, ids=ids, max_questions=args.limit)
+            if args.report:
+                _save(args.report, result)
+            if as_json:
+                _json(result, settings.api_key)
+            else:
+                console.print(result.get("mode", "Advanced challenges"), markup=False)
+                for item in result["questions"]:
+                    console.print(f"{item['id']:02d} {item['status']}: {item['reason']}", markup=False)
+                console.print(f"Verified passes: {result['passed']}/{result['total']}", markup=False)
+                if "counts" in result:
+                    console.print(json.dumps(result["counts"], sort_keys=True), markup=False)
+            return 0 if result["passed"] == result["total"] else 1
         agent = PortfolioAgent(settings)
         if args.command == "ask":
             answer = agent.answer_question(args.question)
@@ -200,6 +222,10 @@ def main(argv: list[str] | None = None) -> int:
                 _json(answer.model_dump(mode="json"), settings.api_key)
             else:
                 _render_answer(console, answer, trace=args.trace, secret=settings.api_key)
+                if args.debug:
+                    from pl_capital.presentation import diagnostic_payload
+
+                    console.print(Syntax(json.dumps(diagnostic_payload(answer, settings.api_key), indent=2), "json", word_wrap=True))
             return 1 if answer.error else 0
         if args.command == "eval":
             from pl_capital.evaluator import evaluate

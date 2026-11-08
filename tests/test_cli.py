@@ -72,6 +72,38 @@ def test_model_switch_before_or_after_command(monkeypatch, capsys):
     capsys.readouterr()
 
 
+def test_challenge_references_never_construct_an_agent(settings, monkeypatch, capsys, tmp_path):
+    from pl_capital import cli
+
+    monkeypatch.setenv("PL_CAPITAL_DATA_DIR", str(settings.data_root))
+    monkeypatch.setenv("PL_CAPITAL_CACHE_DIR", str(settings.cache_dir))
+    monkeypatch.setenv("GROQ_API_KEY", "")
+    def forbidden(_):
+        raise AssertionError("Reference mode must not construct a model client")
+    monkeypatch.setattr(cli, "PortfolioAgent", forbidden)
+    report = tmp_path / "references.json"
+    assert cli.main(["challenges", "--references", "--json", "--report", str(report)]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["passed"] == result["total"] == 20
+    assert json.loads(report.read_text())["passed"] == 20
+
+
+def test_human_cli_answer_precedes_evidence_and_raw_json(capsys):
+    from rich.console import Console
+
+    from pl_capital.cli import _render_answer
+    answer = Answer(
+        executed_sql="SELECT COUNT(*) AS portfolio_count FROM portfolios",
+        result={"columns": ["portfolio_count"], "rows": [[13]], "row_count": 1,
+                "source_tables": ["portfolios"]},
+    )
+    _render_answer(Console(width=100, markup=False), answer, trace=True, secret="")
+    output = capsys.readouterr().out
+    assert output.index("13 portfolios") < output.index("Executed SQL")
+    assert "secret_schema" not in output
+    assert "portfolio_count = 13" in output
+
+
 def test_json_errors_do_not_expose_private_key(monkeypatch, capsys):
     from pl_capital import cli
     from pl_capital.errors import ConfigurationError

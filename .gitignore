@@ -22,4 +22,5 @@ reports/
 .gemini-research.json
 graphify-out/
 PL_Capital_Codex_Master_Prompt*.md
+/Prompts/
 .work/
