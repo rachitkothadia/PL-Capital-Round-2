@@ -412,7 +412,11 @@ class PortfolioAgent:
         except CapitalError as exc:
             answer.status = "tool_error"
             answer.error = answer.message = str(exc)
-            event("error", "Analysis stopped safely.", {"error": str(exc)})
+            event(
+                "error",
+                "Analysis stopped safely.",
+                {"error": str(exc), "provider_failure": getattr(self._planner, "last_failure", {})},
+            )
             return answer
         except (sqlite3.Error, OSError, ValueError, TypeError, RuntimeError) as exc:
             answer.status = "tool_error"

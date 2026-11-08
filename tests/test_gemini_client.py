@@ -228,3 +228,36 @@ def test_input_and_streamed_response_budgets(settings):
         assert len(calls) == 1
     finally:
         planner.close()
+
+
+@pytest.mark.parametrize(
+    "status,category,label",
+    [(429, "rate_limit", "rate limit"), (503, "provider_service", "temporary service failure")],
+)
+def test_provider_failure_categories_are_precise_and_safe(
+    settings, monkeypatch, status, category, label
+):
+    import httpx
+    from pl_capital.gemini_client import GeminiPlanner
+    from pl_capital.errors import PlanningError
+
+    monkeypatch.setattr("pl_capital.gemini_client.time.sleep", lambda _: None)
+    client = httpx.Client(
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(
+                status, json={"error": {"message": settings.api_key}}, headers={"retry-after": "1"}
+            )
+        )
+    )
+    planner = GeminiPlanner(settings, client=client)
+    try:
+        with pytest.raises(PlanningError, match=label) as error:
+            planner.plan("Count portfolios", {})
+        assert f"HTTP {status}" in str(error.value) and settings.api_key not in str(error.value)
+        assert planner.last_failure == {
+            "http_status": status,
+            "retry_after_seconds": 1,
+            "category": category,
+        }
+    finally:
+        planner.close()

@@ -37,6 +37,7 @@ class GeminiPlanner:
         self._key = settings.api_key
         self.client = client or httpx.Client(timeout=45, follow_redirects=False)
         self.last_usage = {}
+        self.last_failure = {}
 
     def set_model(self, model):
         if model not in GEMINI_MODELS:
@@ -45,6 +46,7 @@ class GeminiPlanner:
 
     def plan(self, question, context, *, previous_portfolio=None, correction=None):
         self.last_usage = {}
+        self.last_failure = {}
         encoded = json.dumps(
             {
                 "question": question,
@@ -68,7 +70,7 @@ class GeminiPlanner:
                 "thinkingConfig": {"thinkingBudget": 2048, "includeThoughts": False},
             },
         }
-        if self.model.startswith("gemini-3") :
+        if self.model.startswith("gemini-3"):
             body["generationConfig"].pop("thinkingConfig", None)
         for attempt in range(3):
             try:
@@ -92,8 +94,20 @@ class GeminiPlanner:
                         if attempt < 2 and delay <= 30:
                             time.sleep(delay)
                             continue
+                        self.last_failure = {
+                            "http_status": response.status_code,
+                            "retry_after_seconds": delay,
+                            "category": "rate_limit"
+                            if response.status_code == 429
+                            else "provider_service",
+                        }
+                        reason = (
+                            "rate limit"
+                            if response.status_code == 429
+                            else "temporary service failure"
+                        )
                         raise PlanningError(
-                            "Gemini rate limit or temporary service failure; retry later."
+                            f"Gemini {reason} (HTTP {response.status_code}); retry after at least {delay:g} seconds."
                         )
                     if (
                         response.status_code == 403
