@@ -28,6 +28,7 @@ Metric definitions (apply to all similar questions, never guess absent data):
   ordered by stored cost_basis descending and the requested LIMIT.
 - Average current price by sector returns sector_name,avg_price, ordered avg_price descending.
   Include all securities joined to sectors, even bonds when a sector is actually assigned.
+  Return the full AVG value without ROUND unless the user explicitly requests rounding.
 - Market value is quantity*current_price, never current_weight or AUM. A sector market-value
   breakdown by portfolio returns portfolio_name,sector_value,total_value,sector_percentage
   in that order. Denominator includes ALL holdings of the portfolio. Numerator filters the sector.

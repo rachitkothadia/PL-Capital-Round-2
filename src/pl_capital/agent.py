@@ -15,7 +15,11 @@ from pl_capital.models import Answer, TraceEvent
 from pl_capital.redaction import clean_text
 from pl_capital.sql_safety import validate, validate_audit_projection
 from pl_capital.sql_tool import execute
-from pl_capital.verification import market_value_sector, verify_market_values
+from pl_capital.verification import (
+    market_value_sector,
+    validate_average_precision,
+    verify_market_values,
+)
 
 INJECTION = re.compile(
     r"ignore\s+(?:all\s+)?(?:previous|prior|system)|GROQ_API_KEY|gsk_[A-Za-z0-9]+|"
@@ -217,6 +221,7 @@ class PortfolioAgent:
                             {"sql": plan.sql, "parameters": params},
                         )
                         sql, tables = validate(plan.sql, params, context["schema"])
+                        validate_average_precision(sql, question)
                         if market_value_sector(question, context["sector_names"]) is not None:
                             validate_audit_projection(sql, question=question)
                         event(

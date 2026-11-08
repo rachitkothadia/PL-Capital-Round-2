@@ -21,8 +21,11 @@ class ClipboardSpy:
 
 
 async def activate(app, pilot, selector, method):
+    # Expansion and feedback can invalidate geometry after a worker completes.
+    await pilot.pause()
     button = app.query_one(selector)
     button.focus(scroll_visible=False)
+    await pilot.pause()
     button.scroll_visible(animate=False, immediate=True)
     await pilot.pause()
     if method == "mouse":

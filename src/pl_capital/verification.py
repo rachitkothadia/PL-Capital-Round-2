@@ -5,8 +5,25 @@ import re
 from collections import defaultdict
 from decimal import ROUND_HALF_UP, Decimal, DecimalException
 
+import sqlglot
+from sqlglot import exp
+
 from pl_capital.database import readonly
 from pl_capital.errors import QueryError
+
+
+def validate_average_precision(sql: str, question: str) -> None:
+    """Keep unrequested rounding out of computed averages, including prices."""
+    if not re.search(r"\b(?:average|avg|mean)\b", question, re.I) or re.search(
+        r"\b(?:round(?:ed|ing)?|decimals?|cents?|precision)\b", question, re.I
+    ):
+        return
+    tree = sqlglot.parse_one(sql, read="sqlite")
+    if any(rounding.find(exp.Avg) is not None for rounding in tree.find_all(exp.Round)):
+        raise QueryError(
+            "Do not round a computed average unless the question requests rounding. "
+            "Return the unrounded AVG value; presentation handles display formatting."
+        )
 
 
 def market_value_sector(question: str, sector_names: list[str]) -> str | None:

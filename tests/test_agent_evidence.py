@@ -89,3 +89,40 @@ def test_legitimate_window_ratio_keeps_requested_precision_and_shape(settings):
         assert planner.calls == 1
     finally:
         agent.close()
+
+
+def test_unrequested_average_rounding_is_corrected_before_execution(settings):
+    from pl_capital.agent import PortfolioAgent
+
+    unrounded = "SELECT AVG(current_price) AS avg_price FROM securities WHERE sector_id=1"
+    class CorrectingPlanner(Planner):
+        def plan(self, *_args, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                return Plan(intent="sql_query", sql=unrounded.replace("AVG(current_price)", "ROUND(AVG(current_price),2)"), parameters=[], portfolio=None, message=None)
+            assert "round" in kwargs["correction"]["error"].casefold()
+            return Plan(intent="sql_query", sql=unrounded, parameters=[], portfolio=None, message=None)
+    planner = CorrectingPlanner(unrounded)
+    agent = PortfolioAgent(settings, planner=planner)
+    try:
+        answer = agent.answer_question("What is the average current price in the technology sector?")
+        assert answer.error is None
+        assert answer.result["rows"] == [[719.245]]
+        assert planner.calls == 2
+        assert len([event for event in answer.trace if event.stage == "execution"]) == 1
+    finally:
+        agent.close()
+
+
+def test_explicit_average_rounding_is_allowed(settings):
+    from pl_capital.agent import PortfolioAgent
+
+    planner = Planner("SELECT ROUND(AVG(current_price),2) AS avg_price FROM securities WHERE sector_id=1")
+    agent = PortfolioAgent(settings, planner=planner)
+    try:
+        answer = agent.answer_question("Round the average current price to two decimals")
+        assert answer.error is None
+        assert answer.result["rows"] == [[719.25]]
+        assert planner.calls == 1
+    finally:
+        agent.close()
