@@ -258,6 +258,19 @@ def test_equal_overlap_scores_accept_any_tie_order_and_pair_orientation(settings
     assert compare_challenge(case, actual, expected)[0] == "pass"
 
 
+def test_overlap_ids_are_valid_identity_and_wrong_values_still_fail(settings):
+    from pl_capital.challenges import compare_challenge, load_questions, reference_results
+
+    case = load_questions(settings.data_root)[6]
+    expected = reference_results(settings.data_root, settings.db_path, ids=[7])[7]
+    selected = [i for i, name in enumerate(expected["columns"]) if name not in {"portfolio_a", "portfolio_b"}]
+    actual = {**expected, "columns": [expected["columns"][i] for i in selected],
+              "rows": [[row[i] for i in selected] for row in expected["rows"]]}
+    assert compare_challenge(case, actual, expected)[0] == "pass"
+    actual["rows"][0][-1] += 0.01
+    assert compare_challenge(case, actual, expected)[0] == "fail"
+
+
 def test_recorded_top_sector_tie_has_explicit_alphabetical_choice(settings):
     from pl_capital.challenges import reference_results, verify_references
 

@@ -596,7 +596,7 @@ ALIASES = {
     "hhi": "sector_hhi concentration_index herfindahl_index herfindahl_hirschman_index",
     "effective_sector_count": "effective_sectors effective_number_of_sectors inverse_hhi",
     "top_sector": "largest_sector dominant_sector",
-    "recorded_weight_sum": "weight_sum total_weight recorded_total total_recorded_weight sum_current_weight",
+    "recorded_weight_sum": "weight_sum recorded_sum total_weight recorded_total total_recorded_weight sum_current_weight",
     "discrepancy_pp": "weight_discrepancy_pp difference_pp signed_gap_pp signed_discrepancy_pp discrepancy_percentage_points",
     "has_bonds": "holds_bonds holds_bond bond_present has_bond_holdings",
     "total_aum": "aum recorded_aum",
@@ -645,7 +645,7 @@ ALIASES = {
     "end_date": "streak_end_date streak_end last_date",
     "observation_count": "observations num_observations data_points observation_points price_observation_count",
     "price_date": "date observation_date",
-    "intraday_range_pct": "range_pct intraday_range_percentage intraday_pct percentage_range range_percentage",
+    "intraday_range_pct": "range_pct intraday_range_percentage intraday_pct percentage_range range_percentage pct_change",
     "common_date": "latest_common_date observation_date date latest_date synchronized_date performance_date calculation_date",
     "return_1m": "total_return_1m one_month_return return_1m_pct one_month_return_pct",
     "volatility": "volatility_pct volatility_percentage",
@@ -655,10 +655,10 @@ ALIASES = {
     "max_drawdown": "maximum_drawdown drawdown max_drawdown_pct drawdown_pct",
     "first_nav": "initial_nav start_nav",
     "last_nav": "final_nav end_nav",
-    "nav_change": "absolute_nav_change nav_absolute_change absolute_change nav_difference",
+    "nav_change": "absolute_nav_change nav_absolute_change nav_change_abs absolute_change nav_difference",
     "nav_change_pct": "nav_percentage_change percentage_nav_change nav_return_pct percentage_change pct_change",
-    "first_var_95": "first_var95 initial_var95 initial_var_95 start_var_95",
-    "last_var_95": "last_var95 final_var95 final_var_95 end_var_95",
+    "first_var_95": "first_var95 var_first initial_var95 initial_var_95 start_var_95",
+    "last_var_95": "last_var95 var_last final_var95 final_var_95 end_var_95",
     "signed_change": "signed_var_change var_signed_change var_change signed_difference",
     "magnitude_change": "absolute_magnitude_change change_in_magnitude var_magnitude_change abs_var_change abs_change",
     "signed_direction": "var_direction signed_var_direction direction",
@@ -812,6 +812,9 @@ def compare_challenge(case: dict, actual: dict, expected: dict) -> tuple[str, st
             )
         mapping[candidates[0]] = (index, name)
     missing = set(case["required_columns"]) - set(mapping)
+    if case["id"] == 7 and {"portfolio_a_id", "portfolio_b_id"} <= set(mapping):
+        # IDs identify the two funds just as unambiguously as their names.
+        missing -= {"portfolio_a", "portfolio_b"}
     if missing:
         return "fail", "Requested measures are missing: " + ", ".join(sorted(missing)) + "."
     fields = [field for field in expected["columns"] if field in mapping]
