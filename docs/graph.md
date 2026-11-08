@@ -19,12 +19,46 @@ parameterized `GRAPH.RO_QUERY` traversals; users cannot submit Cypher.
 Graph values provide relationship context only. Quantitative answers always come
 from SQLite. Context and status explicitly identify actual native use or fallback.
 
-For each question, bounded token matching discovers portfolio and sector nodes.
-Fixed traversals retrieve their security/sector relationships, selected schema
-columns, and foreign-key join paths. Actual query text and parameter values appear
-in the returned context. Native retrieval uses `ro_query` exclusively. Context is
-capped below 20,000 JSON characters and does not contain graph-based financial
-calculations. The SQL planner separately receives authoritative SQLite schema.
+Before native retrieval, a bounded SQLite schema/entity catalogue identifies
+recognized names and analytical terms. Stopwords and unknown noise words are not
+used as graph search terms. Synonyms such as funds/portfolios and stocks/equities
+select known schema families. A spelling correction requires exactly one known
+schema/entity token within one character edit or adjacent transposition; short or
+ambiguous tokens are left unresolved. This never changes the user's financial
+question or invents portfolio identifiers.
+
+Simple single-table lookups, including portfolio counts, use SQLite schema
+without starting or querying the native graph. Unrelated prose also skips it.
+Known company names alone do not justify graph use for nonanalytical questions.
+`GraphContext(settings, lazy=True)` defers native startup until relationship
+context is useful; the explicit graph-status command retains eager diagnostics.
+
+For relevant requests, fixed traversals retrieve matching entity IDs and their
+security/sector relationships, selected columns and foreign-key joins. Actual
+Cypher and bound parameters are recorded. Native `used=true` requires matching
+entities or contributed join evidence, rather than merely a running backend or
+schema-shaped response. Generic historical/window queries can benefit from real
+schema joins even without a named portfolio or sector. The result also records
+`attempted`, `retrieval_ms`, recognized `terms`, disclosed `normalizations`, and
+`useful_evidence`. A no-evidence result falls back explicitly to SQLite metadata.
+
+Native retrieval uses `ro_query` exclusively. Each call has at most a 250 ms query
+timeout; a one-second cooperative budget is checked between read calls after
+startup. Startup lock waits and socket timeouts are separately capped at two
+seconds. Startup latency is recorded separately in backend status; the response's
+retrieval time includes startup when it occurs. Startup/cleanup involve native
+process operations, so this is not a hard one-second wall-clock guarantee.
+Context targets less than 18,000 JSON characters
+and contains no graph-based financial calculations. The planner separately
+receives authoritative SQLite schema.
+
+An actual macOS arm64 profile measured lazy construction at 0.007 ms and the
+misspelled count question at 8.791 ms with no native startup/queries. A first
+Technology-sector traversal took 376.396 ms including startup; a warm corrected
+sector spelling took 6.436 ms, and risk/performance join-only context took 3.494 ms.
+These are local samples, not performance guarantees. The previous eager path
+spent 401.831 ms starting the server before a simple count and incorrectly claimed
+graph use for the noise terms `maby`, `do`, and `we`.
 
 If a graph query fails mid-session, the adapter closes the native connection and
 returns SQLite-introspected schema, foreign keys, and matching entity hints. Its

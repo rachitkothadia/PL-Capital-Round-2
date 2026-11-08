@@ -5,6 +5,7 @@ import json
 import sqlite3
 import sys
 from contextlib import closing
+from time import perf_counter
 
 from filelock import FileLock
 
@@ -26,13 +27,16 @@ class GraphContext:
     trusted snapshot ingestion below. Errors produce a visible SQLite fallback.
     """
 
-    def __init__(self, settings: Settings):
+    def __init__(self, settings: Settings, *, lazy: bool = False):
         self.settings = settings
         self._db = None
         self._graph = None
         self._backend = "sqlite"
         self._reason = "Graph disabled by GRAPH_BACKEND=off."
         self._graph_name = ""
+        self._startup_attempted = False
+        self._startup_ms = 0.0
+        self._closed = False
         if settings.graph_backend == "off":
             return
         if sys.platform == "win32":
@@ -40,11 +44,34 @@ class GraphContext:
                 "Native Windows uses SQLite; FalkorDBLite requires supported macOS/Linux."
             )
             return
+        self._reason = (
+            "Graph not started; SQLite schema is available until relationship context is needed."
+        )
+        if not lazy:
+            self.ensure_started()
+
+    def ensure_started(self) -> bool:
+        """Start at most once; irrelevant requests never need the native server."""
+        if self._graph is not None and self._backend == "falkordblite":
+            return True
+        if (
+            self._closed
+            or self._startup_attempted
+            or self.settings.graph_backend == "off"
+            or sys.platform == "win32"
+        ):
+            return False
+        self._startup_attempted = True
+        started = perf_counter()
         try:
             factory = _load_lite()
-            settings.cache_dir.mkdir(parents=True, exist_ok=True)
-            with FileLock(str(settings.cache_dir / "graph.lock"), timeout=10):
-                self._db = factory(str(settings.cache_dir / "graph.rdb"))
+            self.settings.cache_dir.mkdir(parents=True, exist_ok=True)
+            with FileLock(str(self.settings.cache_dir / "graph.lock"), timeout=2):
+                self._db = factory(
+                    str(self.settings.cache_dir / "graph.rdb"),
+                    socket_timeout=2,
+                    socket_connect_timeout=2,
+                )
             self.synchronize()
             self._backend = "falkordblite"
             self._reason = "Local relationship graph synchronized with the SQLite snapshot."
@@ -54,14 +81,28 @@ class GraphContext:
                 "use uv run --extra graph pl-capital on macOS/Linux; "
                 "macOS also requires libomp. SQLite remains fully operational."
             )
+        finally:
+            self._startup_ms = round((perf_counter() - started) * 1000, 3)
+        return self._backend == "falkordblite"
 
     def status(self) -> dict:
         return {
             "backend": self._backend,
-            "status": "ready" if self._backend == "falkordblite" else "fallback",
+            "status": "ready"
+            if self._backend == "falkordblite"
+            else (
+                "deferred"
+                if not self._startup_attempted
+                and not self._closed
+                and self.settings.graph_backend != "off"
+                and sys.platform != "win32"
+                else "fallback"
+            ),
             "requested": self.settings.graph_backend,
             "reason": self._reason,
             "graph": self._graph_name if self._backend == "falkordblite" else None,
+            "startup_attempted": self._startup_attempted,
+            "startup_ms": self._startup_ms,
         }
 
     def _fallback(self, reason: str) -> None:
@@ -79,7 +120,7 @@ class GraphContext:
         if self._db is None:
             return
         path = self.settings.db_path.resolve()
-        with FileLock(str(self.settings.cache_dir / "graph.lock"), timeout=10):
+        with FileLock(str(self.settings.cache_dir / "graph.lock"), timeout=2):
             with closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)) as conn:
                 manifest = json.loads(
                     conn.execute("SELECT manifest FROM _dataset_meta").fetchone()[0]
@@ -220,6 +261,7 @@ class GraphContext:
         return retrieve(self, question)
 
     def close(self) -> None:
+        self._closed = True
         client, self._db = self._db, None
         self._graph = None
         if client is not None:
