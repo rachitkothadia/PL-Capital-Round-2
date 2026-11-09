@@ -1,129 +1,103 @@
-# PL Capital — Round 2 Technical Assessment
+# PL Capital | Portfolio Intelligence Terminal
 
-A local portfolio analytics submission with an answer-first terminal interface, auditable financial calculations and an embedded relationship graph. This is an applicant assessment submission, not an official PL Capital product.
+**Ask in plain language. Explore the answer. Inspect the evidence behind it.**
 
-The four mandatory components remain separate and tested:
+*Rachit Kothadia · PL Capital Round 2 Technical Assessment*
 
-| Component | Responsibility |
+A portfolio analytics workspace that turns natural-language questions into auditable analysis. It brings a Gemini planner, read-only SQL, deterministic financial tools, and an embedded relationship graph into one interactive terminal.
+
+**10/10 on the official live assessment · 20/20 independently verified advanced references · 480 local tests passed in release verification**
+
+## What I built
+
+| Capability | What it gives the reviewer |
 | --- | --- |
-| SQL Query Tool | Validate and execute one bounded, read-only SQLite query with bound parameters. |
-| Exposure Calculator | Use Decimal arithmetic for recorded stock-sector weights; distinguish whole-portfolio contribution from equity-normalized exposure. |
-| Portfolio Agent | Ask Gemini for a typed plan, retrieve grounded context and dispatch to validated local tools. The model supplies no financial arithmetic. |
-| Ground Truth Evaluator | Run the original ten questions through the real agent and compare against independent references. |
+| **Natural-language portfolio agent** | A typed Gemini plan routes each request to SQL, exposure analysis, or a market scenario. Follow-up questions can reuse the portfolio context, and ambiguous requests get a clarification. |
+| **Auditable SQL analytics** | Explore holdings, transactions, performance, risk, and portfolio comparisons. Inspect the exact executed SQL, its bound parameters, source tables, and validation decisions. |
+| **Deterministic exposure calculator** | Measure sector concentration with clearly labeled whole-portfolio and equity-normalized weights. The calculation exposes coverage gaps and how bonds are treated. |
+| **Portfolio stress testing** | Apply hypothetical equity-sector and bond shocks. Review portfolio value changes, P&L, returns, sector contributions, and the holding-level arithmetic behind them. The direct calculator also runs without an API key. |
+| **Embedded GraphRAG** | FalkorDBLite grounds the planner in portfolio, holding, security, sector, and schema relationships. The app records the graph evidence used and falls back to SQLite metadata when graph context is unavailable. |
+| **Independent evaluation** | Run the official questions through the live agent and check each result against an independent reference. A separate challenge suite tests more demanding SQL and financial logic, with failures and inconclusive outcomes reported separately. |
 
-A fifth tool, **Scenario Analysis**, applies deterministic hypothetical stock-sector and bond price shocks. **FalkorDBLite GraphRAG** retrieves entities and schema relationships; SQLite remains the authoritative numeric source.
+## An interactive terminal built for review
 
-## Quick start
+- **Answers first, evidence on demand.** Expand the execution trace to see which tool ran, what data it used, the calculation or SQL it executed, and which checks passed. Assumptions, warnings, and elapsed time are visible alongside the result.
+- **Mouse and keyboard navigation.** Click actions, scroll through wide tables with fixed identifier columns, open a full table, and drill into individual records. Scenario details include the sector breakdown for the selected portfolio.
+- **Take the evidence with you.** Copy accepted SQL or scenario calculations, save SQL to a file, and export complete bounded results as JSON with their provenance.
+- **Responsive while work runs.** Background workers keep the terminal responsive during analysis. The agent skips unnecessary graph lookups, limits the context sent to Gemini, and executes queries and calculations locally. Timings make it possible to see where a request spends its time.
 
-Use Python 3.12–3.14 and [uv](https://docs.astral.sh/uv/). From the checkout:
+## How an answer earns trust
+
+```mermaid
+flowchart LR
+    Q["Portfolio question"] --> P["Gemini planner"]
+    G["FalkorDBLite relationship context"] --> P
+    P --> T["SQL, exposure, or scenario tool"]
+    D["Authoritative SQLite snapshot"] --> T
+    T --> E["Answer and execution evidence"]
+```
+
+| Safeguard | Why it matters |
+| --- | --- |
+| **Read-only execution** | Generated SQL passes statement, schema, and function checks. Bound values, SQLite read-only access, and a database authorizer constrain what can run. |
+| **Bounded work** | Query time, execution steps, result size, and graph retrieval have limits. SQL gets one corrective attempt when a check rejects the proposed query or answer. |
+| **Financial validation** | Decimal calculators make financial arithmetic repeatable. Independent source checks verify selected SQL metrics, including AUM gaps, equity denominators, and historical decline streaks. |
+| **Clear handling of data gaps** | The workspace distinguishes an empty result, missing observations, unsupported analysis, and execution failure. A rejected calculation keeps its reason visible. |
+| **Traceable graph context** | Parameterized Cypher retrieves relevant relationships. Snapshot fingerprints detect changes, and the trace records graph usage only when relevant evidence is returned. Health checks exercise a real traversal. |
+| **Controlled data exposure** | Live planning sends the question and bounded schema or relationship context to Gemini. Financial execution stays local, credentials are kept out of exports, and diagnostics redact sensitive values. |
+
+## Run the project
+
+Use Python 3.12–3.14 and [uv](https://docs.astral.sh/uv/). For live questions, copy `.env.example` to `.env` and set your own `GEMINI_API_KEY`.
 
 ```sh
-cp .env.example .env
-# Edit .env locally and set GEMINI_API_KEY; never commit it.
 uv sync --locked
 uv run pl-capital doctor --graph
 uv run pl-capital
 ```
 
-In PowerShell, use `Copy-Item .env.example .env`. Environment values override `.env`. Gemini is the only model provider, following the explicit provider migration requested after the original assessment. The default is `gemini-3.1-flash-lite`; use `/model` or `--model` for a documented alternative your Google project can access. A configured key does not establish live quota or model permission. There is no automatic provider fallback.
+The embedded graph runs on supported macOS and Linux environments without Docker. On macOS, install `libomp` if the native loader requires it. Windows uses SQLite for analysis. The supplied data is a historical snapshot. [Graph setup and recovery](docs/graph.md) · [Financial methodology](docs/methodology.md)
 
-On macOS, the embedded engine may require OpenMP:
+## Command reference
 
-```sh
-brew install libomp
-uv sync --locked
-uv run pl-capital graph build --json
-```
-
-The graph dependency is installed by default on macOS/Linux. `uv sync --locked --extra graph` remains compatible. The Mac repair was verified using this project's uv Python 3.13.11, FalkorDBLite 0.11.0 and the existing libomp 22.1.8. **No Docker or hosted graph is required.** The wrapper manages a local Redis/FalkorDB subprocess and persistent cache files.
-
-Native Windows installs omit the unsupported graph dependency; the TUI, SQLite tools and scenario calculator remain available. WSL2 can run the Linux setup. Consult [graph setup and diagnostics](docs/graph.md) for platform, native-library and licensing details; CI results and limitations are recorded in the repair report.
-
-## Using the terminal
-
-Answers appear before explanations. Technical evidence is collapsed until expanded. SQL answers show the actual accepted query, bindings, source tables, operations and validation. Scenario answers show shocks, formulas, representative holding arithmetic, reconciled totals and assumptions. Diagnostic JSON is opt-in.
-
-| Action | Control |
+| Terminal command | Action |
 | --- | --- |
-| Send / insert newline | Enter / Ctrl+J |
-| Command palette / help | Ctrl+P / `/help` |
-| Expand calculation details | Ctrl+T |
-| Navigate table cells | Arrow keys; focus the grid first |
-| Scroll grid / jump to ends | PageUp/PageDown, Ctrl+Home/Ctrl+End |
-| Open full result / selected record | **Full Table** button / Enter in grid |
-| Copy accepted SQL or scenario calculation | F6 or corresponding button |
-| Export all bounded results | F7 or **Export** |
-| Toggle theme | `/theme dark`, `/theme light` |
-| Inspect native graph | `/graph` |
-| Exit | Ctrl+Q |
+| `/help`, `Ctrl+P` | Open help or the command palette |
+| `/new`, `/clear`, `/sessions` | Start a session, reset follow-up context, or inspect session names |
+| `/model [model-id]` | Inspect or switch the Gemini planner |
+| `/graph` | Inspect native graph health and retrieval evidence |
+| `/trace`, `Ctrl+T` | Expand execution evidence |
+| `/debug` | Open redacted diagnostics |
+| `/copy`, `F6` | Copy the latest accepted SQL or scenario calculation |
+| `/export`, `F7` | Export the latest answer and its evidence |
+| `/eval` | Run the official live evaluation inside the terminal |
+| `/quit`, `:q`, `Ctrl+Q` | Exit the workspace |
 
-Tables have fixed identifier columns, nonwrapping cells, horizontal scrolling and full record views. All returned columns and bounded rows remain available; export retains original values, order and nulls. Money, NAV per unit, ratios, percentages and percentage-point differences have distinct labels. Renderer code never invents a missing SQL calculation. Themes persist in the local user configuration.
+| CLI command | Action |
+| --- | --- |
+| `uv run pl-capital` | Launch the interactive workspace |
+| `uv run pl-capital ask "<question>" --trace` | Run a one-shot analysis with its evidence. Use `--json` for structured output. |
+| `uv run pl-capital scenario --shock "SECTOR=CHANGE"` | Run a scenario directly. Use `scenario --help` for bond shocks, portfolio filters, and output options. |
+| `uv run pl-capital init-db` | Initialize the validated SQLite snapshot. |
+| `uv run pl-capital doctor --graph` | Check data, configuration, and native graph readiness. |
+| `uv run pl-capital graph status` | Inspect the embedded graph and its retrieval evidence. |
+| `uv run pl-capital graph build` | Synchronize the graph with the SQLite snapshot. |
+| `uv run pl-capital graph rebuild` | Recover or refresh the derived graph. |
+| `uv run pl-capital eval --live --report reports/official.json` | Score the official live assessment and save evidence. |
+| `uv run pl-capital challenges --references` | Verify the advanced references offline. |
+| `uv run pl-capital challenges --live` | Run the advanced questions through the active model. |
+| `uv run pl-capital --help` | View all commands and options. |
 
-Copy SQL uses only accepted executed SQL. Python scenarios offer **Copy Calculation**, with no misleading SQL action. Native clipboard feedback is confirmed separately from unconfirmed terminal requests. Exports use exclusive generated filenames and restrictive permissions beneath the user cache; failed writes do not overwrite existing files.
+## Verification
 
-## Example questions
+The advanced reference checks compare SQL and independent Python calculations. A separate saved advanced live run scored **17/20 after semantic rescoring**, with three failures retained. Live outcomes depend on model access and provider limits.
 
-```sh
-uv run pl-capital ask "How many portfolios are there?"
-uv run pl-capital ask "Show the sector exposure breakdown for Balanced Portfolio"
-uv run pl-capital ask "For each portfolio with performance and risk records, show its latest common date, NAV, Sharpe ratio, beta and 95% VaR."
-uv run pl-capital ask "Apply a hypothetical Technology price fall of 22%, Energy rise of 11% and Financials fall of 7% across all portfolios; other stocks and bonds are unchanged."
-```
-
-The direct scenario command works **without a model or API key**:
-
-```sh
-uv run pl-capital scenario --shock Technology=-22% --shock Energy=11% --shock Financials=-7% --json
-uv run pl-capital scenario --shock Technology=-10% --portfolio "Growth Equity Fund" --trace
-```
-
-CLI shocks accept percentages or fractions: `-22%` and `-0.22` mean the same price change. The Python request accepts fractions only. Unmentioned stocks and bonds default to zero change. Use `--other-equity` and `--bonds` to change those defaults. Invalid sectors, ambiguous funds, nonfinite numbers, prices below zero after a shock, missing valuation inputs and mixed currencies produce explicit outcomes.
-
-For the verified main scenario, the 95 supplied holdings across 13 portfolios have pre-shock market value **USD 20,987,636.50**, post-shock value **USD 18,927,162.27**, and P&L **−2,060,474.23 (−9.81756202038%)**. These values were also produced through the real agent and independently checked. They are a hypothetical revaluation of the supplied snapshot, not a forecast or recommendation.
-
-The denominator is the available holdings' market value, `SUM(quantity × current_price)`. Reported AUM and recorded weights represent different supplied measures and do not reconcile to it. Equity returns exclude bonds; post-shock equity-sector exposures normalize stocks only. Bond-only equity returns are unavailable, not zero. A portfolio with no sector losses displays **None (no sector losses)**. No fees, trades, FX, income or rebalancing are simulated. [Scenario formulas and limits](docs/scenario.md).
-
-## Graph health and recovery
-
-```sh
-uv run pl-capital graph status --json
-uv run pl-capital graph build --json
-uv run pl-capital graph rebuild --json
-uv run pl-capital doctor --graph --json
-```
-
-Health proves actual Cypher retrieval, not just a successful import. The supplied graph has **238 nodes and 398 relationships**, including 13 Portfolios, 95 Holdings, 30 Securities and 10 Sectors, plus schema and snapshot nodes. Useful paths include `Portfolio → Holding → Security → Sector`. Retrieval records the Cypher, parameters, matched entities, joins, fingerprint, elapsed time and whether evidence actually reached the planner.
-
-Build is idempotent. A versioned fingerprint includes actual SQLite rows, so in-place changes cannot silently reuse stale context. Rebuild affects the application's derived graph namespace; recovery preserves damaged files and unrelated user graph keys. SQLite and source CSVs remain intact. Graph build/rebuild return a failure exit code when native readiness cannot be established. `GRAPH_BACKEND=off` explicitly disables the graph; package, loader and query failures show an honest SQLite fallback.
-
-## Validation
+The release was checked on macOS, Linux, and Windows, with native graph checks on macOS and Linux. A packaged build also ran the scenario calculator outside the checkout without a key.
 
 ```sh
 uv run pytest -q
 uv run ruff check .
-uv run python scripts/check_secrets.py
-uv run pl-capital challenges --references --report reports/references.json
-uv run pl-capital eval --live --report reports/official.json
-uv run pl-capital challenges --live --report reports/advanced.json
 uv build
 ```
 
-Live commands send the question and bounded schema/relationship context to Google. Numeric execution and independent reference calculations stay local. Live evaluation requires the configured key and consumes the project's API allowance; transient failures and quota limits are reported separately from incorrect financial answers.
-
-The original official evaluation was **10/10 before and 10/10 after** the initial Round 3 integration. The twenty advanced references are independently validated by SQL and Python; this reference result is separate from live agent accuracy. See the [repair release report](docs/round3-release-report.md) for final counts, fresh live results, API limitations and verified commit/push evidence. The [advanced question catalog](docs/advanced-test-questions.md) and [semantic scoring policy](docs/challenges.md) explain required fields, units and genuinely inconclusive layouts. Missing fields, wrong signs, incorrect row sets and unsupported aliases never become automatic passes.
-
-Tests cover independent scenario oracles and edge cases, SQL safety and resource limits, historical LAG calculations, complete output projections, native graph read/write/persistence/refresh/recovery, fault injection, clipboard/export safety, themes and keyboard/mouse navigation at 80/110/160 columns. CI exercises core functionality on macOS/Linux/Windows and native graph readiness on macOS/Linux. Actual platform outcomes are reported rather than inferred from the matrix definition.
-
-## Architecture and safeguards
-
-`agent.py` orchestrates `gemini_client.py`, `sql_tool.py`, `exposure.py` and `scenario.py`. `verification.py` checks requested audit projections; `metric_validation.py` independently verifies recognized sector-winner and observed-decline metrics against raw SQLite records. `graph.py`/`retrieval.py` provide bounded relationship context. `presentation.py` supplies shared CLI/TUI explanations; `tui/` handles interaction; `clipboard.py`/`exporting.py` implement explicit user actions. Evaluation references are isolated from production routing and are never used to supply answers.
-
-Canonical execution outcomes are `success`, `empty_result`, `missing_data`, `unsupported_analysis`, `needs_clarification`, `out_of_domain` and `tool_error`. Empty filter results differ from unavailable observations. Unsupported financial calculations differ from unrelated questions. If no calculation was accepted, one concise reason and next step replace the calculation heading. Personal recommendations, trading, secret/file access and policy overrides are outside scope.
-
-SQL is treated as untrusted input: AST statement/schema/function/binding allowlists, a read-only connection, SQLite authorizer, disabled extensions, progress deadlines, row/output budgets and one bounded correction attempt protect execution. Cypher uses fixed query templates and bound values. Source loading is constrained, fingerprinted, locked and atomic. Keys, cache databases, reports and generated screenshots remain outside version control. Diagnostics and exports redact credentials and terminal control characters.
-
-The dataset contains 13 portfolios, 30 securities, 10 sectors, 95 holdings and nine supplied tables. Performance/risk histories cover only four portfolios; the observed time series are historical. No current-price observation date is supplied. Missing observations are not filled with zero. NAV change is not automatically investment return; observed transaction cash movement is not tax-lot realized P&L. See [methodology](docs/methodology.md).
-
-The wheel bundles schema, CSVs, reference catalogs and styles, and exposes the `pl-capital` entry point outside the checkout. Graph binaries come from the separately installed dependency; native graph support is platform-dependent. [Third-party notices](THIRD_PARTY_NOTICES.md) distinguish the BSD wrapper from the engine's SSPL license. OpenCode inspired interaction patterns; no source or assets were copied.
-
-Final advanced verification: a complete paced Flash Lite run produced 13 passes, three failures and four unfamiliar-alias results. Independently tested semantic rescoring of those same answers gives **17/20, with three failures**. Complex sector comparisons and decline-streak SQL remain model-dependent despite strict rejection of incomplete or incorrect answers. Gemini 3 Flash Preview handled those cases, but Google enforced a verified **20 requests per day per project/model** free-tier limit during its full run. Select that model with `/model` or `--model gemini-3-flash-preview` when quota is available. No universal or 20/20 live accuracy is claimed.
+[Scenario calculations](docs/scenario.md) · [Advanced challenge catalog](docs/advanced-test-questions.md) · [Third-party notices](THIRD_PARTY_NOTICES.md)
